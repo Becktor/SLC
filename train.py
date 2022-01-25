@@ -137,6 +137,16 @@ def main():
             ax2.set_ylabel('Accuracy')
             ax2.set_xlabel('Iteration')
             plt.show()
+
+            torch.save({
+                'epoch': x,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': opt.state_dict(),
+                'loss': np.mean(net_l),
+            }, f"ckpts/checkpoint_{x}.pt")
+
+
+
             with open('pseudo_labels.csv', 'w') as csv_file:
                 writer = csv.writer(csv_file)
                 for key, value in pseudo_labels.items():
