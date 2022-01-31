@@ -38,8 +38,7 @@ def main():
                                             transforms.Resize(image_size),
                                             transforms.CenterCrop(image_size),
                                             transforms.ToTensor(),
-                                            transforms.RandomHorizontalFlip(),
-                                            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                            transforms.RandomHorizontalFlip()
                                         ]))
 
     rw_set = ShippingLabClassification(root_dir=rw_set,
@@ -47,8 +46,7 @@ def main():
                                            transforms.Resize(image_size),
                                            transforms.CenterCrop(image_size),
                                            transforms.ToTensor(),
-                                           transforms.RandomHorizontalFlip(),
-                                           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+                                           transforms.RandomHorizontalFlip()
                                        ]))
     try:
         assert (dataset.classes == rw_set.classes)
@@ -143,6 +141,7 @@ def main():
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': opt.state_dict(),
                 'loss': np.mean(net_l),
+                'classes': key_to_class,
             }, f"ckpts/checkpoint_{x}.pt")
 
 
