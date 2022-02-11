@@ -69,6 +69,14 @@ def jitter_rotator_z(val=5):
     return jitter
 
 
+def buoy_rotator():
+    jitter = Rotator(np.random.uniform(0, 30),
+                     np.random.uniform(0, 30),
+                     np.random.uniform(0, 360),
+                     )
+    return jitter
+
+
 def jitter_rotator_all(val=5):
     jitter_val = val
     jitter = Rotator(np.random.uniform(-jitter_val, jitter_val),
@@ -96,22 +104,26 @@ class OnTick(object):
         self.scene_cap = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SceneCapture")[0]
         self.scene_cap_lbl = ue.EditorFilterLibrary.by_actor_label(lst_actors, "LabelCapture")[0]
         self.bg = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Background_resource")[0]
-        self.buoy_g = ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyGreen")[0]
-        self.buoy_r = ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyRed")[0]
-        self.sail_u = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SailU")[0]
-        self.sail_d = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SailD")[0]
-        self.tommo = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Tommo")[0]
-        self.kayak = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Kayak_BP")[0]
-        self.motor = ue.EditorFilterLibrary.by_actor_label(lst_actors, "MotorBoat")[0]
-        self.fishing = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Fishing")[0]
         self.ocean = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Ocean_BP")[0]
 
-        self.movable_actors = [(self.kayak, 2, "Kayak"), (self.tommo, 2, "Human"), (self.buoy_g, 4, "BuoyGreen"),
-                               (self.buoy_r, 4, "BuoyRed"), (self.motor, 2, "MotorBoat"), (self.sail_d, 3, "SailD"),
-                               (self.sail_u, 4, "SailU"), (self.fishing, 1, "Fishing"), ]
-        self.orig_actor_scales = []
-        for obj, _, _ in self.movable_actors:
-            self.orig_actor_scales.append(obj.get_actor_scale3d())
+        ### Objects
+        self.buoy_g =ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyGreen")
+
+        self.buoy_r = ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyRed")
+        self.sail_u = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SailU")
+        self.sail_d = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SailD")
+        self.sl_guys = [ue.EditorFilterLibrary.by_actor_label(lst_actors, "Tommo")[0],
+                        ue.EditorFilterLibrary.by_actor_label(lst_actors, "Frede")[0]]
+        self.kayak = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Kayak")
+        self.motors = ue.EditorFilterLibrary.by_actor_label(lst_actors, "MotorBoat")
+        self.fishing = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Fishing")
+        self.container = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Container")
+
+        self.movable_actors = [(self.kayak, 2, "Kayak"), (self.sl_guys, 5, "Human"), (self.buoy_g, 4, "BuoyGreen"),
+                               (self.buoy_r, 4, "BuoyRed"), (self.motors, 3, "MotorBoat"), (self.sail_d, 3, "SailD"),
+                               (self.sail_u, 4, "SailU"), (self.fishing, 1, "Fishing"),
+                               (self.container, 1, "Container")]
+
         self.tmp = []
 
     def _set_actor_ini_pos(self):
@@ -134,10 +146,17 @@ class OnTick(object):
         self._set_actor_ini_pos()
 
         n = 10000
-        xy_min = [-8000, 2000]
-        xy_max = [8000, 100000]
+        xy_min = [-1, 4000]
+        xy_max = [1, 50000]
         self.sample_points = np.random.uniform(low=xy_min, high=xy_max, size=(n, 2))
-        self.n_samplings = 50
+        xy_min = [-1, 3000]
+        xy_max = [1, 10000]
+        self.sample_points_close = np.random.uniform(low=xy_min, high=xy_max, size=(n, 2))
+        xy_min = [-1, 20000]
+        xy_max = [1, 100000]
+        self.sample_points_far = np.random.uniform(low=xy_min, high=xy_max, size=(n, 2))
+
+        self.n_samplings = 10000
         # # Get All possible combinations
 
         self.on_tick = ue.register_slate_post_tick_callback(self.__tick__)
@@ -174,15 +193,21 @@ class OnTick(object):
         cntr = 0
         obj_possos = []
         objects_in_frame = random.sample(self.movable_actors, num)
-        for obj, cnt, name in objects_in_frame:
+        for obj_l, cnt, name in objects_in_frame:
             num = random.randint(1, cnt)
             for _ in range(num):
-                sample = self.random_sample_func(obj_possos)
+                num = random.randint(1, len(obj_l)) - 1
+
+                obj = obj_l[num]
+                sample = self.random_sample_func(obj_possos, name)
                 obj_possos.append(sample)
                 pos = obj.get_actor_location()
-                new_pos = Vector(sample[0], sample[1], pos.z)
+                new_pos = Vector(sample[0] * sample[1], sample[1], pos.z)
+                rot = jitter_rotator_z(360)
+                if name in ["BuoyRed", "BuoyGreen"]:
+                    rot = buoy_rotator()
+                temp = ELL.spawn_actor_from_object(obj, new_pos, rot)
 
-                temp = ELL.spawn_actor_from_object(obj, new_pos, jitter_rotator_z(360))
                 tt = list(temp.get_components_by_class(ue.StaticMeshComponent))
                 gg = list(temp.get_components_by_class(ue.SkeletalMeshComponent))
                 j = tt + gg
@@ -190,31 +215,44 @@ class OnTick(object):
                 for i, x in enumerate(j):
                     x.set_editor_property("custom_depth_stencil_value", cntr)
 
-                scale = temp.get_actor_scale3d() * random.uniform(1.05, 1.10)
+                scale = temp.get_actor_scale3d() * random.uniform(.85, 1.15)
                 temp.set_actor_scale3d(scale)
                 temp.set_actor_hidden_in_game(False)
+
                 self.tmp.append(temp)
                 object_list.append([name, get_color(cntr)])
         # print(self.tmp)
         # BG Rot
         self.bg.set_actor_rotation(jitter_rotator_z(360), True)
-        rot = jitter_rotator_all(2)
+        rot = jitter_rotator_all(3)
         self.cam.add_actor_local_rotation(rot, False, True)
         # self.lbl_cam.add_actor_local_rotation(rot, False, True)
         # self.scene_cap.add_actor_local_rotation(rot, False, True)
         # self.scene_cap_lbl.add_actor_local_rotation(rot, False, True)
         self.curr_sample = object_list  # s.append(object_list)
+        # np.random.shuffle(self.sample_points)
+        # np.random.shuffle(self.sample_points_close)
 
-    def random_sample_func(self, current_pos):
+    def random_sample_func(self, current_pos, name):
         min_rad = 1000
         r = range(len(self.sample_points))
         sample = self.sample_points[random.sample(r, 1)[0]]
-        #print(sample)
+        close = ["BuoyRed", "BuoyGreen", "Human", "Kayak"]
+        far = ["Container"]
+        if name in close:
+            sample = self.sample_points_close[random.sample(r, 1)[0]]
+        if name in far:
+            sample = self.sample_points_far[random.sample(r, 1)[0]]
+        # print(sample)
         attempts = 0
         if len(current_pos) != 0:
             for _ in range(10):
                 idx = random.sample(r, 1)[0]
                 sample = self.sample_points[idx]
+                if name in close:
+                    sample = self.sample_points_close[idx]
+                if name in far:
+                    sample = self.sample_points_far[idx]
                 all_bigger = 0
                 for x in current_pos:
                     dist = np.sqrt(np.sum((sample - x) ** 2))
@@ -273,10 +311,6 @@ class OnTick(object):
 
                 with open(self.csv_path, 'a') as file:
                     file.write(f"{name},{self.curr_sample}\n")
-                # for obj, scale in zip(self.movable_actors, self.orig_actor_scales):
-                #     obj.set_actor_hidden_in_game(True)
-                #     obj.set_actor_scale3d(scale)
-                # print('t',self.tmp)
 
                 self.tmp = []
                 self._set_actor_ini_pos()

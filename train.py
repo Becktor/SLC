@@ -1,6 +1,6 @@
 import csv
 import os
-
+import fiftyone as fo
 import higher as higher
 import timm
 import torch
@@ -143,7 +143,6 @@ def main():
                 'loss': np.mean(net_l),
                 'classes': key_to_class,
             }, f"ckpts/checkpoint_{x}.pt")
-
 
 
             with open('pseudo_labels.csv', 'w') as csv_file:
