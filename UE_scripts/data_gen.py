@@ -70,8 +70,8 @@ def jitter_rotator_z(val=5):
 
 
 def buoy_rotator():
-    jitter = Rotator(np.random.uniform(0, 30),
-                     np.random.uniform(0, 30),
+    jitter = Rotator(np.random.uniform(0, 10),
+                     np.random.uniform(0, 10),
                      np.random.uniform(0, 360),
                      )
     return jitter
@@ -107,7 +107,7 @@ class OnTick(object):
         self.ocean = ue.EditorFilterLibrary.by_actor_label(lst_actors, "Ocean_BP")[0]
 
         ### Objects
-        self.buoy_g =ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyGreen")
+        self.buoy_g = ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyGreen")
 
         self.buoy_r = ue.EditorFilterLibrary.by_actor_label(lst_actors, "BuoyRed")
         self.sail_u = ue.EditorFilterLibrary.by_actor_label(lst_actors, "SailU")
@@ -123,6 +123,10 @@ class OnTick(object):
                                (self.buoy_r, 4, "BuoyRed"), (self.motors, 3, "MotorBoat"), (self.sail_d, 3, "SailD"),
                                (self.sail_u, 4, "SailU"), (self.fishing, 1, "Fishing"),
                                (self.container, 1, "Container")]
+
+        self.movable_actors = [(self.kayak, 2, "Kayak"), (self.buoy_g, 4, "BuoyGreen"),
+                               (self.buoy_r, 4, "BuoyRed"), (self.motors, 3, "MotorBoat"), (self.sail_d, 3, "SailD"),
+                               (self.sail_u, 4, "SailU"), (self.fishing, 1, "Fishing")]
 
         self.tmp = []
 
@@ -147,10 +151,10 @@ class OnTick(object):
 
         n = 10000
         xy_min = [-1, 4000]
-        xy_max = [1, 50000]
+        xy_max = [1, 30000] #in cm so 300 meters away
         self.sample_points = np.random.uniform(low=xy_min, high=xy_max, size=(n, 2))
         xy_min = [-1, 3000]
-        xy_max = [1, 10000]
+        xy_max = [1, 10000] # 100 meters away
         self.sample_points_close = np.random.uniform(low=xy_min, high=xy_max, size=(n, 2))
         xy_min = [-1, 20000]
         xy_max = [1, 100000]
@@ -176,13 +180,15 @@ class OnTick(object):
         self.cam_fov = self.cam.camera_component.field_of_view
         self.lbl_cam.camera_component.set_field_of_view(110)
         self.lbl_cam_fov = self.cam.camera_component.field_of_view
+        self.tock = True
+
 
     def take_step(self, deltatime):
         self.curr_sample = ("None", "None")
         self.start = datetime.now()
         object_list = []
-        self.sky.set_editor_property("Cloud Coverage", random.uniform(0, 2))
-        self.sky.set_editor_property("Time Of Day", random.uniform(600, 1750))
+        self.sky.set_editor_property("Cloud Coverage", random.uniform(0, 1.5))
+        self.sky.set_editor_property("Time Of Day", random.uniform(700, 1650))
         self.sky.set_editor_property("Sun Angle", random.uniform(0, 360))
         # print(dir(self.ocean.water_waves))
         # self.ocean.water_waves.gerstner_wave_generator.min_amplitude = random.uniform(0.01, 8)
@@ -213,7 +219,7 @@ class OnTick(object):
                 j = tt + gg
                 cntr += 1
                 for i, x in enumerate(j):
-                    x.set_editor_property("custom_depth_stencil_value", cntr)
+                      x.set_editor_property("custom_depth_stencil_value", cntr)
 
                 scale = temp.get_actor_scale3d() * random.uniform(.85, 1.15)
                 temp.set_actor_scale3d(scale)
@@ -232,6 +238,7 @@ class OnTick(object):
         self.curr_sample = object_list  # s.append(object_list)
         # np.random.shuffle(self.sample_points)
         # np.random.shuffle(self.sample_points_close)
+
 
     def random_sample_func(self, current_pos, name):
         min_rad = 1000
@@ -267,54 +274,58 @@ class OnTick(object):
     def __tick__(self, deltatime):
         try:
             if self.n_samplings > self.i:
-                self.take_step(deltatime)
                 if keyboard.is_pressed('q'):
                     for t in self.tmp:
                         ELL.destroy_actor(t)
                     self.i = 800
                     assert False
 
-                img_path = os.path.join(self.base_path, "img")
                 name = f"p_{self.i}_{self.cam_fov}.png"
-                # path2 = os.path.join(path, "2"+name)
+                if self.tock:
+                    self.take_step(deltatime)
+                    self.tock = False
+                    #self.scene_cap.capture_component2d.capture_scene()
 
-                if not os.path.exists(img_path):
-                    os.makedirs(img_path)
-                mas_path = os.path.join(self.base_path, "mask")
-                if not os.path.exists(mas_path):
-                    os.makedirs(mas_path)
+                    mas_path = os.path.join(self.base_path, "mask")
+                    if not os.path.exists(mas_path):
+                        os.makedirs(mas_path)
+                    val = IMG_DIM[0] / IMG_DIM[1]
+                    self.lbl_cam.camera_component.set_constraint_aspect_ratio(True)
+                    self.lbl_cam.camera_component.set_aspect_ratio(val)
+                    # AL.take_high_res_screenshot(1280, 960, path2, self.lbl_cam)
+                    self.scene_cap_lbl.capture_component2d.capture_scene()
+                    ue.RenderingLibrary.export_render_target(self.scene_cap_lbl,
+                                                             self.scene_cap_lbl.capture_component2d.texture_target,
+                                                             mas_path, name)
+                else:
+                    img_path = os.path.join(self.base_path, "img")
 
-                val = IMG_DIM[0] / IMG_DIM[1]
-                self.cam.camera_component.set_constraint_aspect_ratio(True)
-                self.cam.camera_component.set_aspect_ratio(val)
-                # AL.take_high_res_screenshot(1280, 960, path2, self.cam)
+                    if not os.path.exists(img_path):
+                        os.makedirs(img_path)
 
-                self.scene_cap.capture_component2d.capture_scene()
-                ue.RenderingLibrary.export_render_target(self.scene_cap,
-                                                         self.scene_cap.capture_component2d.texture_target,
-                                                         img_path, name)
+                    val = IMG_DIM[0] / IMG_DIM[1]
+                    self.cam.camera_component.set_constraint_aspect_ratio(True)
+                    self.cam.camera_component.set_aspect_ratio(val)
+                    # AL.take_high_res_screenshot(1280, 960, path2, self.cam)
 
-                val = IMG_DIM[0] / IMG_DIM[1]
-                self.lbl_cam.camera_component.set_constraint_aspect_ratio(True)
-                self.lbl_cam.camera_component.set_aspect_ratio(val)
-                # AL.take_high_res_screenshot(1280, 960, path2, self.lbl_cam)
-                self.scene_cap_lbl.capture_component2d.capture_scene()
-                ue.RenderingLibrary.export_render_target(self.scene_cap_lbl,
-                                                         self.scene_cap_lbl.capture_component2d.texture_target,
-                                                         mas_path, name)
-                avg_exec_time.append(datetime.now() - self.start)
-                avg_exec = np.mean(avg_exec_time)
-                est_remaining_time = avg_exec * (min(0, self.n_samplings - self.i))
-                print("avg exec time: {}, est time remaining: {}".format(avg_exec, est_remaining_time / 60))
-                for t in self.tmp:
-                    ELL.destroy_actor(t)
+                    self.scene_cap.capture_component2d.capture_scene()
+                    ue.RenderingLibrary.export_render_target(self.scene_cap,
+                                                             self.scene_cap.capture_component2d.texture_target,
+                                                             img_path, name)
+                    avg_exec_time.append(datetime.now() - self.start)
+                    avg_exec = np.mean(avg_exec_time)
+                    est_remaining_time = avg_exec * (max(0, self.n_samplings - self.i))
+                    print("avg exec time: {}, est time remaining: {}".format(avg_exec, est_remaining_time / 60))
+                    for t in self.tmp:
+                        ELL.destroy_actor(t)
+                    self.scene_cap.capture_component2d.capture_scene()
+                    with open(self.csv_path, 'a') as file:
+                        file.write(f"{name},{self.curr_sample}\n")
 
-                with open(self.csv_path, 'a') as file:
-                    file.write(f"{name},{self.curr_sample}\n")
-
-                self.tmp = []
-                self._set_actor_ini_pos()
-                self.i += 1
+                    self.tmp = []
+                    self._set_actor_ini_pos()
+                    self.i += 1
+                    self.tock = True
             else:
                 ue.unregister_slate_post_tick_callback(self.on_tick)
         except Exception as error:

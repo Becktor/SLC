@@ -12,16 +12,20 @@ from tqdm import tqdm
 import numpy as np
 import itertools
 import wandb
+from models import GluonResnext50
+import torch.nn as nn
+from pathlib import Path
 
 torch.manual_seed(0)
 
 
-def main():
-    root_dir = r'Q:\classification\updated-ds_no_small'
-    rw_set = r'Q:\classification\re-weight-set'
+def run_net(root_dir, ra, epochs=25):
+    val_dir = r'Q:\classification\IROS_DS\percent_test\val_set'
+    root_dir = root_dir
+    rw_set = r'Q:\classification\IROS_DS\re-weight-set'
     image_size = 128
     batch_size = 32
-    epochs = 100
+    epochs = epochs
     wandb.init(
         project="Classification",
         config={
@@ -30,10 +34,22 @@ def main():
             "batch_size": batch_size,
             "image_size": 256,
             "total_epochs": epochs,
+            "ra": ra,
+            "rd": Path(root_dir).name
         },
     )
+
     workers = 2
+
     dataset = ShippingLabClassification(root_dir=root_dir,
+                                        transform=transforms.Compose([
+                                            transforms.Resize(image_size),
+                                            transforms.CenterCrop(image_size),
+                                            transforms.ToTensor(),
+                                            transforms.RandomHorizontalFlip()
+                                        ]))
+
+    val_set = ShippingLabClassification(root_dir=val_dir,
                                         transform=transforms.Compose([
                                             transforms.Resize(image_size),
                                             transforms.CenterCrop(image_size),
@@ -52,19 +68,21 @@ def main():
         assert (dataset.classes == rw_set.classes)
     except Exception as e:
         print(f"dataset class to index does not match. Exception: {e}")
-    t_split = int(dataset.__len__() * 0.8)
-    v_split = dataset.__len__() - t_split
+
     key_to_class = dict((v, k) for k, v in dataset.classes.items())
-    train_set, val_set = torch.utils.data.random_split(dataset, [t_split, v_split])
-    t_dataloader = DataLoader(train_set, batch_size=batch_size,
+
+    t_dataloader = DataLoader(dataset, batch_size=batch_size,
                               shuffle=True, num_workers=workers)
+
     v_dataloader = DataLoader(val_set, batch_size=batch_size,
                               shuffle=True, num_workers=workers)
 
     rw_dataloader = DataLoader(rw_set, batch_size=batch_size // 2,
                                shuffle=True, num_workers=workers)
     n_classes = len(dataset.classes.keys())
-    model = timm.create_model('gluon_resnext50_32x4d', pretrained=True, num_classes=n_classes)
+
+    model = GluonResnext50(n_classes=n_classes)
+
     if torch.cuda.is_available():
         model.cuda()
         torch.backends.cudnn.benchmark = True
@@ -73,33 +91,61 @@ def main():
 
     loss = torch.nn.CrossEntropyLoss()
     loss_no_red = torch.nn.CrossEntropyLoss(reduction='none')
-    loss_funcs = {"red": loss, "no_red": loss_no_red}
+    loss_funcs = {"red": loss, "no_red": loss_no_red, "mse": torch.torch.nn.MSELoss(reduction='none')}
 
-    net_losses, accuracy_log = [], []
+    net_losses, accuracy_log = [], [],
     pseudo_labels = {}
     reweight_cases = {}
-    meta_losses_clean = []
     rw_loader = itertools.cycle(rw_dataloader)
+
+    # model_handler={}
+    # model_handler['imgs'] = imgs
+    # model_handler['lbls'] = lbls
+    # model_handler['rw_sample'] = rw_sample
+    # model_handler['loss_funcs'] = loss_funcs
+    # model_handler['model'] = model
+    # model_handler['opt'] = opt
+    # model_handler['meta_losses_clean'] = meta_losses_clean
+    # model_handler['i'] = i
+    # model_handler['epochs'] = epochs
+    # model_handler['reweight_cases'] = reweight_cases
+    # model_handler['pseudo_labels'] = pseudo_labels
+    # model_handler['paths'] = paths
+    # model_handler['epoch_max_min'] = epoch_max_min
+    epoch_max_min = {'max': [],
+                     'min': []}
+
     for x in range(epochs):
         model.train()
-        net_l, meta_losses_clean = [], []
+        net_l, meta_losses_clean, m_cross, m_reg = [], [], [], []
         tqdm_dl = tqdm(t_dataloader)
+
         for i, data in enumerate(tqdm_dl, 0):
             imgs, lbls, idxs, paths = data
-            check_and_replace_with_pseudo(imgs, pseudo_labels, lbls, i)
-
+            if ra:
+                check_and_replace_with_pseudo(imgs, pseudo_labels, lbls, i)
+                rw_img, rw_lbl, _, _ = next(rw_loader)
+                rw_sample = rw_img.cuda(), rw_lbl.cuda()
             imgs = imgs.cuda()
             lbls = lbls.cuda()
-            rw_img, rw_lbl, _, _ = next(rw_loader)
-            rw_sample = rw_img.cuda(), rw_lbl.cuda()
 
-            cost = do_forward_backward(imgs, lbls, rw_sample, loss_funcs, model, opt, meta_losses_clean, i, epochs,
-                                       reweight_cases, idxs, pseudo_labels, paths)
+            if ra:
+                cost, cross, reg = do_forward_backward(imgs, lbls, rw_sample, loss_funcs, model, opt, meta_losses_clean, i,
+                                                           epochs,
+                                                           reweight_cases, idxs, pseudo_labels, paths, epoch_max_min)
+            else:
+                output, _ = model(imgs)
+                reg = [0]
+                cross = [0]
+                cost = loss_funcs['red'](output, lbls)
             opt.zero_grad()
             cost.backward()
             opt.step()
             net_l.append(cost.cpu().detach())
-            tqdm_dl.set_description(f"mean Loss {np.mean(net_l):.4f}")
+            m_cross.append(cross)
+            m_reg.append(reg)
+            tqdm_dl.set_description(f"e:{x} -- mean Loss: {np.mean(net_l):.4f} currloss: {cost:.4f} "
+                                    f"m_xe: {np.mean(m_cross):.4f} m_r: {np.mean(m_reg):.4f}")
 
         net_losses.append(np.mean(net_l))
         model.eval()
@@ -108,7 +154,7 @@ def main():
             t_imgs, t_lbls, _, _ = data
             t_imgs = t_imgs.cuda()
             t_lbls = t_lbls.cuda()
-            pred = model(t_imgs.cuda())
+            pred, _ = model(t_imgs.cuda())
             predicted = torch.argmax(torch.softmax(pred, dim=1), dim=1)
             acc.append((predicted.int() == t_lbls.int()).float())
             accuracy = torch.cat(acc, dim=0).mean().cpu()
@@ -120,8 +166,14 @@ def main():
         log_dict = {
             "val/acc": float(accuracy),
             "train/running_loss": np.mean(net_l),
+            'train/xe': np.mean(m_cross),
+            'train/reg': np.mean(m_reg),
             "train/meta_epoch_loss": np.mean(meta_losses_clean),
         }
+
+        if x == 20:
+            print('wait')
+
         if x % 5 == 0 and x > 0:
             fig, axes = plt.subplots(1, 2, figsize=(13, 5))
             ax1, ax2 = axes.ravel()
@@ -142,8 +194,8 @@ def main():
                 'optimizer_state_dict': opt.state_dict(),
                 'loss': np.mean(net_l),
                 'classes': key_to_class,
-            }, f"ckpts/checkpoint_{x}.pt")
 
+            }, f"ckpts/checkpoint_{x}.pt")
 
             with open('pseudo_labels.csv', 'w') as csv_file:
                 writer = csv.writer(csv_file)
@@ -158,13 +210,14 @@ def main():
                     writer.writerow([file_pl, lbl_pl, score_pl, reweight_count])
 
         wandb.log(log_dict)
+    wandb.finish()
 
 
 def do_forward_backward(image, labels, rw_sample, loss_func, model, opt, m_epoch_loss, curr_epoch, epochs,
-                        reweight_cases, index, pseudo_labels, paths):
+                        reweight_cases, index, pseudo_labels, paths, max_min):
     with higher.innerloop_ctx(model, opt) as (meta_model, meta_opt):
 
-        output = meta_model(image)
+        output, _ = meta_model(image)
         cost = loss_func['no_red'](output, labels)
         eps = torch.zeros(cost.size()).cuda()
         eps = eps.requires_grad_()
@@ -174,11 +227,21 @@ def do_forward_backward(image, labels, rw_sample, loss_func, model, opt, m_epoch
         meta_opt.step(l_f_meta)
 
         v_image, v_labels = rw_sample
-        l_g_output = meta_model(v_image)
+        l_g_output, _ = meta_model(v_image)
         l_g_meta = loss_func["red"](l_g_output, v_labels)
         m_epoch_loss.append(float(l_g_meta))
         grad_eps = torch.autograd.grad(l_g_meta, eps)[0].detach()
-
+        grad_w = torch.clamp(-grad_eps, min=0, max=1)
+        t_max = torch.max(grad_w)
+        t_min = torch.min(grad_w)
+        max_min['max'].append(t_max)
+        max_min['min'].append(t_min)
+        if len(max_min['max']) > 540:
+            max_min['max'].pop(0)
+            max_min['min'].pop(0)
+        g_min = torch.min(torch.tensor(max_min['min']))
+        g_max = torch.max(torch.tensor(max_min['max']))
+        grad_norm = torch.clamp((grad_w - g_min) / (g_max - g_min), min=0, max=1)
         # Line 11 computing and normalizing the weights
         w_tilde = torch.clamp(-grad_eps, min=0)
         norm_c = torch.sum(w_tilde)
@@ -187,9 +250,13 @@ def do_forward_backward(image, labels, rw_sample, loss_func, model, opt, m_epoch
         else:
             w = w_tilde
 
-        output = model(image)
-        loss = loss_func['no_red'](output, labels)
-        loss = torch.sum(loss * w)
+        output, ow = model(image)
+        xc = loss_func['no_red'](output, labels)
+        reg = loss_func['mse'](torch.squeeze(ow), grad_norm)
+        reg_s = torch.sum(reg * w)
+        alpha, beta = 1, 1
+        crossentropy = torch.sum(xc * w)*alpha + reg_s * beta
+        loss = crossentropy
 
         wl = torch.le(w, 0.5 / eps.shape[0])
 
@@ -201,9 +268,9 @@ def do_forward_backward(image, labels, rw_sample, loss_func, model, opt, m_epoch
         scores, predictions = torch.max(softmax, axis=1)
 
         score_thresh = 1 - ((1 / 4) * np.sin((curr_epoch / epochs)))
-        update_annotation(wl.cpu(), index, scores, predictions, pseudo_labels, curr_epoch, score_thresh, paths,
+        update_annotation(wl.cpu().numpy(), index, scores, predictions, pseudo_labels, curr_epoch, score_thresh, paths,
                           reweight_cases, w)
-        return loss
+        return loss, float(crossentropy), float(reg_s)
 
 
 def add_reweight_cases_to_update_anno_dict(w, wl, reweight_cases, ds_index):
@@ -272,4 +339,21 @@ def do_forward_backward_standard(imgs, lbls, tqdm_dl, model, loss, opt, net_l):
 
 
 if __name__ == "__main__":
-    main()
+    r=[(r'Q:\classification\IROS_DS\percent_test\train_set_50m', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_50m', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_50', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_50', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_25m', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_25m', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_25', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_25', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_10m', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_10m', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_10', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_10', False),]
+    models = [(r'Q:\classification\IROS_DS\percent_test\train_set_5m', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_5m', False),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_5', True),
+              (r'Q:\classification\IROS_DS\percent_test\train_set_5', False)]
+    for x, ra in models:
+        run_net(x, ra)
