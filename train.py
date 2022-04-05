@@ -32,7 +32,7 @@ def run_net(root_dir, ra, epochs=25):
             "learning_rate": 5e-5,
             "gamma": 0.1,
             "batch_size": batch_size,
-            "image_size": 256,
+            "image_size": image_size,
             "total_epochs": epochs,
             "ra": ra,
             "rd": Path(root_dir).name
@@ -81,7 +81,7 @@ def run_net(root_dir, ra, epochs=25):
                                shuffle=True, num_workers=workers)
     n_classes = len(dataset.classes.keys())
 
-    model = GluonResnext50(n_classes=n_classes)
+    model = GluonResnext50(n_classes=n_classes, model_name='gluon_resnext50_32x4d')
 
     if torch.cuda.is_available():
         model.cuda()
@@ -339,21 +339,6 @@ def do_forward_backward_standard(imgs, lbls, tqdm_dl, model, loss, opt, net_l):
 
 
 if __name__ == "__main__":
-    r=[(r'Q:\classification\IROS_DS\percent_test\train_set_50m', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_50m', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_50', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_50', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_25m', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_25m', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_25', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_25', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_10m', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_10m', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_10', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_10', False),]
-    models = [(r'Q:\classification\IROS_DS\percent_test\train_set_5m', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_5m', False),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_5', True),
-              (r'Q:\classification\IROS_DS\percent_test\train_set_5', False)]
-    for x, ra in models:
-        run_net(x, ra)
+    path = r'D:\Data\sl_class'
+    run_net(path, False)
+
