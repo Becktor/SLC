@@ -2,22 +2,24 @@ import csv
 import os
 import fiftyone as fo
 import higher as higher
+import scipy
 import timm
 import torch
 import ttach as tta
 from torch.utils.data import Dataset, DataLoader
-from DataLoader import ShippingLabClassification
+from DataLoader import ShippingLabClassification, letterbox
 from torchvision import transforms, utils
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
 import itertools
 import wandb
-from models import GluonResnext50, BayesGluonResnext50, DropoutGluonResnext50, TTAModel, BayesVGG11, VOSGluonResnext50
+from models import GluonResnext50, BayesGluonResnext50, DropoutModel, TTAModel, BayesVGG16, VOSModel
 import torch.nn as nn
 from pathlib import Path
 import random
 import sklearn.metrics as metrics
+import torch.onnx
 
 
 class TransformWrapper(object):
@@ -32,37 +34,37 @@ class TransformWrapper(object):
 
 idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [14, 5], [25, 6], [25, 6], [19, 14], [19, 14], [12, 18], [12, 18], [17, 18], [17, 18], [14, 20], [14, 20], [14, 23], [14, 23], [4, 24], [4, 24], [22, 24], [22, 24], [30, 24], [30, 24], [9, 25], [9, 25], [10, 25], [10, 25], [16, 25], [16, 25], [23, 25], [23, 25], [5, 26], [5, 26], [6, 28], [6, 28], [7, 28], [7, 28], [8, 28], [8, 28], [9, 28], [9, 28], [28, 34], [28, 34], [28, 37], [28, 37], [24, 39], [25, 39], [29, 39], [30, 39], [30, 39], [31, 39], [1, 40], [2, 40], [28, 40], [22, 56], [23, 56], [18, 58], [28, 73], [29, 73], [29, 73], [30, 73], [3, 74], [4, 74], [10, 82], [11, 82], [25, 83], [26, 83], [13, 84], [14, 84], [3, 85], [4, 85], [18, 85], [16, 88], [17, 88], [20, 93], [21, 93], [21, 93], [22, 93], [24, 98], [25, 98], [25, 98], [26, 98], [17, 99], [18, 99], [21, 99], [22, 99], [28, 99], [29, 99], [13, 101], [14, 101], [1, 104], [2, 104], [26, 104], [27, 104], [28, 105], [29, 105], [12, 108], [6, 113], [7, 113], [22, 113], [30, 119], [31, 119], [25, 120], [26, 120], [30, 121], [31, 121], [2, 122], [16, 122], [17, 122], [28, 123], [29, 123], [19, 124], [20, 124], [2, 129], [3, 129], [15, 137], [16, 137], [8, 143], [9, 143]]
 
+
 def run_net(root_dir, ra, epochs=25, name=''):
     val_dir = os.path.join(root_dir, 'val_set')
     data = r'Q:\git\SLC\ckpts'
-    image_size = 128
+    image_size = 224
     batch_size = 32
-    workers = 2
-    model_name = 'vgg11'
-    torch.manual_seed(1)
+    workers = 4
+    model_name = "mobilenetv3_rw"
+    torch.manual_seed(5)
     val_set = ShippingLabClassification(root_dir=val_dir,
                                         transform=transforms.Compose([
-                                            transforms.Resize(image_size, max_size=int(image_size*1.2)),
-                                            transforms.CenterCrop((image_size, image_size)),
+                                            letterbox((image_size, image_size)),
                                             transforms.ToTensor()
                                         ]))
 
     v_dataloader = DataLoader(val_set, batch_size=batch_size,
-                              shuffle=False, num_workers=workers)
+                              shuffle=True, num_workers=workers)
 
     n_classes = len(val_set.classes.keys())
     if name == 'bayes':
-        model = BayesVGG11(n_classes=n_classes)
-    elif name == 'mc_dropout':
-        model = DropoutGluonResnext50(n_classes=n_classes, model_name=model_name)
+        model = BayesVGG16(n_classes=n_classes)
+    elif name == 'dropout':
+        model = DropoutModel(n_classes=n_classes, model_name=model_name)
     elif name == 'vos':
-        model = VOSGluonResnext50(n_classes=n_classes, model_name=model_name)
+        model = VOSModel(n_classes=n_classes, model_name=model_name)
     else:
         model = TTAModel(n_classes=n_classes, model_name=model_name)
 
-    path = os.path.join(data, model_name + "_" + name + "_100.pt")
+    path = os.path.join(data, model_name + "_" + name + "_40.pt")
     if name == 'tta':
-        path = os.path.join(data, model_name + "_mc_dropout_100.pt")
+        path = os.path.join(data, model_name + "_mc_dropout_94.pt")
 
     model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
@@ -95,6 +97,9 @@ def run_net(root_dir, ra, epochs=25, name=''):
     total_lbl = []
     ood_acc = []
     idxss = []
+
+    cls_hist = {}
+    hist = []
     with torch.no_grad():
         tqd_e = tqdm(enumerate(v_dataloader, 0), total=len(v_dataloader))
         fig, axes = plt.subplots(2, 1, figsize=(5, 7), gridspec_kw={'height_ratios': [3, 1]})
@@ -108,6 +113,20 @@ def run_net(root_dir, ra, epochs=25, name=''):
                 obj = model.evaluate_classification(t_imgs, samples=10, std_multiplier=2)
             else:
                 obj = model.evaluate_classification(t_imgs, samples=10, std_multiplier=2)
+
+            # accuracy of cert
+            exclude_lst = []
+            # for elem in range(len(show_obj["mean"])):
+            #     pr = show_obj["preds"][:, elem].cpu().numpy()
+            #     mean = show_obj["mean"][elem].cpu().numpy()
+            #     std = show_obj["stds"][elem].cpu().numpy()
+            #     cls = np.argmax(mean)
+            #     if name == 'vos':
+            #         ood_m = torch.logsumexp(show_obj['lse_m'][elem], 0).cpu().numpy()
+            #         conf = model.cdf(ood_m)
+            #         conf_class = model.cdf_class(ood_m, np.argmax(mean))
+            #     if conf_class <= 0.95:
+            #         exclude_lst.append(elem)
 
             predicted = torch.argmax(obj['sp'], dim=1)
             total_pred.append(predicted.cpu().numpy())
@@ -133,18 +152,29 @@ def run_net(root_dir, ra, epochs=25, name=''):
                 pr = show_obj["preds"][:, elem].cpu().numpy()
                 mean = show_obj["mean"][elem].cpu().numpy()
                 std = show_obj["stds"][elem].cpu().numpy()
-                # if name == 'vos':
-                #     ood_m = torch.logsumexp(show_obj['lse_m'][elem], 0).cpu().numpy()
-                #     conf = model.cdf(ood_m)
-                #     conf_class = model.cdf_class(ood_m, np.argmax(mean))
-                if [elem, i] not in idx_to_check:
+                cls = np.argmax(mean)
+                if name == 'vos':
+                    ood_m = torch.logsumexp(show_obj['lse_m'][elem], 0).cpu().numpy()
+                    conf = model.cdf(ood_m)
+                    conf_class = model.cdf_class(ood_m, cls)
+                    if cls in cls_hist:
+                        cls_hist[cls].append(ood_m)
+                    else:
+                        cls_hist[cls] = [ood_m]
+                    hist.append(ood_m)
+                if conf_class >= 0.1:
                     continue
+                # if [elem, i] not in idx_to_check:
+                #     continue
                 ax1, ax2 = axes.ravel()
                 ax1.imshow(img.cpu()[elem].permute(1, 2, 0).numpy())
                 n = list(val_set.classes.keys())[np.argmax(mean)]
                 l = list(val_set.classes.keys())[lbl[elem]]
                 # ax1.title.set_text(f'pred:  {n}\nlabel: {l}')
-                ax1.set_title(f'pred: {n}\nlabel: {l}', loc='left')
+                if conf_class <= 0.05:
+                    ax1.title.set_text(f'pred: OOD\nlabel: {l}')
+                else:
+                    ax1.set_title(f'pred: {n}\nlabel: {l}', loc='left')
                 std_l = list(val_set.classes.keys())[np.argmax(std)]
                 std_l = list(val_set.classes.keys())[np.argmax(std)]
                 # ax2.errorbar(np.arange(9),pr,std,fmt='ok', lw=3)
@@ -179,10 +209,37 @@ def run_net(root_dir, ra, epochs=25, name=''):
             label.set_rotation(45)
             label.set_ha('right')
         plt.show()
-    print(idxss)
+
+    import seaborn as sns
+
+    vals = np.array(hist)
+    q25, q75 = np.percentile(vals, [25, 75])
+    bin_width = 2 * (q75 - q25) * len(vals) ** (-1 / 3)
+    bins = round((vals.max() - vals.min()) / bin_width)
+    sns.displot(np.array(hist), bins=bins*2, kde=True, stat="density")
+    sigma = model.vos_std.mean().cpu().numpy()
+    mu = model.vos_mean.mean().cpu().numpy()
+    x = np.linspace(mu - 3 * sigma, mu + 3 * sigma, 100)
+    plt.plot(x, scipy.stats.norm.pdf(x, mu, sigma), color='red')
+    plt.show()
+
+    for(k, v) in cls_hist.items():
+        v = np.array(v)
+        q25, q75 = np.percentile(v, [25, 75])
+        bin_width = 2 * (q75 - q25) * len(v) ** (-1 / 3)
+        bins = round((v.max() - v.min()) / bin_width)
+        sns.displot(np.array(hist), bins=bins*2,  kde=True, stat="density")
+
+        sigma = model.vos_std[k].cpu().numpy()
+        mu = model.vos_mean[k].cpu().numpy()
+        x = np.linspace(mu - 3 * sigma, mu + 3 * sigma, 100)
+        plt.plot(x, scipy.stats.norm.pdf(x, mu, sigma), color='red')
+        plt.title(f'{k}')
+        plt.show()
+    #print(idxss)
 
 
 if __name__ == "__main__":
     path = r'Q:\uncert_data\ds1_wo_f'
-    for x in ['mc_dropout']:
+    for x in ['vos', 'dropout']:
         run_net(path, False, name=x)

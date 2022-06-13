@@ -24,14 +24,16 @@ from torch.utils.data.dataloader import default_collate
 from torchinfo import summary
 torch.manual_seed(0)
 from itertools import cycle
+from timm.data import resolve_data_config
+from timm.data.transforms_factory import create_transform
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
     try:
         torch.cuda.empty_cache()
         val_dir = os.path.join(root_dir, 'val_set')
         train_dir = os.path.join(root_dir, 'train_set')
-        image_size = 128
+        image_size = 224
         epochs = epochs
         wandb.init(
             project="Uncert_paper",
@@ -43,12 +45,16 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
                 "total_epochs": epochs,
                 "ra": ra,
                 "rd": Path(root_dir).name,
-                "model_name": "efficientnet_es",
-                "method": net_method
+                "model_name": "mobilenetv3_rw",##"deit_small_distilled_patch16_224",##
+                "method": net_method,
+                "vos_multivariate_dim": 128,
             },
         )
         wandb.run.name = wandb.config.method
         model_name = wandb.config.model_name
+        # model = VOSModel(n_classes=8, model_name=model_name)
+        # config = resolve_data_config({}, model=model)
+        # transform = create_transform(**config)
 
         workers = 4
 
@@ -63,7 +69,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
         val_set = ShippingLabClassification(root_dir=val_dir,
                                             transform=transforms.Compose([
                                                 letterbox((image_size, image_size)),
-                                                transforms.ToTensor()
+                                                transforms.ToTensor(),
                                             ]))
 
         key_to_class = dict((v, k) for k, v in dataset.classes.items())
@@ -72,47 +78,41 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
                                   shuffle=True, num_workers=workers, pin_memory=True, persistent_workers=True)
 
         v_dataloader = DataLoader(val_set, batch_size=batch_size,
-                                  shuffle=True, num_workers=workers, pin_memory=True, persistent_workers=True)
+                                  shuffle=False, num_workers=workers, pin_memory=True, persistent_workers=True)
 
         n_classes = len(dataset.classes.keys())
         if wandb.config.method == 'bayes':
             model = BayesVGG16(n_classes=n_classes)
+            name = 'bayes'
         elif wandb.config.method == 'dropout':
             model = DropoutModel(n_classes=n_classes, model_name=model_name)
+            name = 'dropout'
         elif wandb.config.method == 'vos':
-            model = VOSModel(n_classes=n_classes, model_name=model_name)
+            model = VOSModel(n_classes=n_classes, model_name=model_name, start_epoch=10)
         else:
             model = TTAModel(n_classes=n_classes, model_name=model_name)
+            name = 'tta'
         if torch.cuda.is_available():
             model.cuda()
             torch.backends.cudnn.benchmark = True
         if wandb.config.method == 'vos':
-            weight_energy = torch.nn.Linear(n_classes, 1).cuda()
-            torch.nn.init.uniform_(weight_energy.weight)
-            eye_matrix = torch.eye(128, device='cuda')
-            logistic_regression = torch.nn.Linear(1, 2)
-            logistic_regression = logistic_regression.cuda()
-            model_param = [x for x in list(model.parameters()) if x.requires_grad==True]
-            params = model_param + list(weight_energy.parameters()) + list(logistic_regression.parameters())
-            opt = torch.optim.RAdam(params, lr=wandb.config.learning_rate)
+            model_param = [x for x in list(model.parameters()) if x.requires_grad]
+            opt = torch.optim.RAdam(model_param, lr=wandb.config.learning_rate)
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
-            select = 1
+            select = 2
             data_dict = torch.zeros(n_classes, sample_number, 128).cuda()
             for i in range(n_classes):
                 number_dict[i] = 0
             vos_dict = {
-                'logistic_regression': logistic_regression,
-                'eye_matrix': eye_matrix,
-                'weight_energy': weight_energy,
                 'number_dict': number_dict,
                 'sample_number': sample_number,
                 'sample_from': sample_from,
                 'select': select,
-                'loss_weight': 0.01,
-                'data_dict': data_dict,
-                'start_epoch': 20}
+                'loss_weight': 0.1,
+                'data_dict': data_dict
+            }
         else:
             opt = torch.optim.AdamW(model.parameters(), lr=wandb.config.learning_rate)
 
@@ -122,7 +122,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
         summary(model, (batch_size, 3, image_size, image_size))
         model.train()
         for epoch in range(epochs):
-            net_l, meta_losses_clean, m_cross, m_reg, vos_l = [], [], [], [], []
+            net_l, meta_losses_clean, m_cross, m_reg, vos_l, kl_f_l = [], [], [], [], [],[]
             tqdm_dl = tqdm(range(200))
 
             generator = cycle(iter(t_dataloader))
@@ -136,15 +136,17 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
                 if wandb.config.method == 'vos':
                     model.at_epoch = epoch
                     #with torch.cuda.amp.autocast():
-                    pred, output = model(imgs)
+                    pred, output = model(imgs, lbls)
                     vos_dict["num_classes"] = n_classes
                     vos_dict['pred'] = pred
                     vos_dict["output"] = output
                     vos_dict["epoch"] = epoch
                     vos_dict["target"] = lbls
-                    vos_loss = vos_update(model, vos_dict)
+                    vos_loss, kl_f, kl_b = vos_update(model, vos_dict)
+                    vos_loss = vos_dict['loss_weight'] * vos_loss
+                    kl_f = kl_f * 0.1
                     loss = model.loss(pred, lbls)
-                    cost = loss + vos_dict['loss_weight'] * vos_loss
+                    cost = loss + vos_loss + kl_f
 
                 else:
                     #with torch.cuda.amp.autocast():
@@ -159,7 +161,9 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
                 tqdm_dl.set_description(f"e:{epoch} -- mean Loss: {np.mean(net_l):.4f} currloss: {cost:.4f} ")
                 if wandb.config.method == 'vos':
                     vos_l.append(vos_loss.cpu().detach())
-                    tqdm_dl.set_description(f"e:{epoch} -- mL: {np.mean(net_l):.4f} cL: {cost:.4f}, mL: {np.mean(vos_l):.4f}")
+                    kl_f_l.append(kl_f.cpu().detach())
+                    tqdm_dl.set_description(f"e:{epoch} -- mL: {np.mean(net_l):.4f} cL: {cost:.4f},"
+                                            f" vL: {np.mean(vos_l):.4f}, gL: {np.mean(kl_f_l):.4f}")
 
                 if i % 10 == 0:
                     loss_dict = {'train/running_loss': np.mean(net_l[-10:])}
@@ -244,5 +248,5 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=64):
 
 if __name__ == "__main__":
     path = r'Q:\uncert_data\ds1_wo_f'
-    for name, z in zip(['vos', 'dropout', 'bayes'], [1e-4, 1e-4, 1e-2]):
+    for name, z in zip(['vos', 'dropout', 'bayes'], [1e-5, 1e-4, 1e-2]):
         run_net(path, False, net_method=name, lr=z)
