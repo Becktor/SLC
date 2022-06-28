@@ -1,5 +1,14 @@
 # Filetypes
 *.csv
+*.zip
+*.onnx
+
+
+figs/
+lvenv/
+paper/
+vos_143_8/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

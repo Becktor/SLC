@@ -22,18 +22,19 @@ from vos import vos_update
 import torchvision.transforms.functional as TF
 from torch.utils.data.dataloader import default_collate
 from torchinfo import summary
+
 torch.manual_seed(0)
 from itertools import cycle
 from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=256, ):
     try:
         torch.cuda.empty_cache()
         val_dir = os.path.join(root_dir, 'val_set')
         train_dir = os.path.join(root_dir, 'train_set')
-        image_size = 224
+        image_size = 128
         epochs = epochs
         wandb.init(
             project="Uncert_paper",
@@ -45,25 +46,29 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                 "total_epochs": epochs,
                 "ra": ra,
                 "rd": Path(root_dir).name,
-                "model_name": "mobilenetv3_rw",##"deit_small_distilled_patch16_224",##
+                "model_name": "mobilenet_v3",  ##"deit_small_distilled_patch16_224",##"mobilenetv3_rw",#
                 "method": net_method,
                 "vos_multivariate_dim": 128,
             },
         )
+
         wandb.run.name = wandb.config.method
         model_name = wandb.config.model_name
         # model = VOSModel(n_classes=8, model_name=model_name)
         # config = resolve_data_config({}, model=model)
         # transform = create_transform(**config)
-
+        print(torch.cuda.get_device_name(0))
         workers = 4
-
+        cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
+        gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
+        rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
+        rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]), p=0.2)
         dataset = ShippingLabClassification(root_dir=train_dir,
                                             transform=transforms.Compose([
                                                 letterbox((image_size, image_size)),
                                                 transforms.ToTensor(),
                                                 transforms.RandomHorizontalFlip(),
-                                                transforms.ColorJitter(),
+                                                cj, gauss, rez, rez2
                                             ]))
 
         val_set = ShippingLabClassification(root_dir=val_dir,
@@ -97,11 +102,11 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
             torch.backends.cudnn.benchmark = True
         if wandb.config.method == 'vos':
             model_param = [x for x in list(model.parameters()) if x.requires_grad]
-            opt = torch.optim.RAdam(model_param, lr=wandb.config.learning_rate)
+            opt = torch.optim.AdamW(model_param, lr=wandb.config.learning_rate)
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
-            select = 2
+            select = 1
             data_dict = torch.zeros(n_classes, sample_number, 128).cuda()
             for i in range(n_classes):
                 number_dict[i] = 0
@@ -122,7 +127,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
         summary(model, (batch_size, 3, image_size, image_size))
         model.train()
         for epoch in range(epochs):
-            net_l, meta_losses_clean, m_cross, m_reg, vos_l, kl_f_l = [], [], [], [], [],[]
+            net_l, meta_losses_clean, m_cross, m_reg, vos_l, kl_f_l = [], [], [], [], [], []
             tqdm_dl = tqdm(range(200))
 
             generator = cycle(iter(t_dataloader))
@@ -135,7 +140,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
                 if wandb.config.method == 'vos':
                     model.at_epoch = epoch
-                    #with torch.cuda.amp.autocast():
+                    # with torch.cuda.amp.autocast():
                     pred, output = model(imgs, lbls)
                     vos_dict["num_classes"] = n_classes
                     vos_dict['pred'] = pred
@@ -144,15 +149,15 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                     vos_dict["target"] = lbls
                     vos_loss, kl_f, kl_b = vos_update(model, vos_dict)
                     vos_loss = vos_dict['loss_weight'] * vos_loss
-                    kl_f = kl_f * 0.1
+                    kl_f = kl_f * 0.01
                     loss = model.loss(pred, lbls)
                     cost = loss + vos_loss + kl_f
 
                 else:
-                    #with torch.cuda.amp.autocast():
+                    # with torch.cuda.amp.autocast():
                     output = model(imgs)
                     cost = model.loss(output, lbls)
-                #with torch.cuda.amp.autocast():
+                # with torch.cuda.amp.autocast():
                 cost.backward()
 
                 opt.step()
@@ -170,17 +175,18 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                     if wandb.config.method == 'vos':
                         loss_dict['train/vos_loss'] = np.mean(vos_l[-10:])
                         wandb.log(loss_dict)
-
+            if wandb.config.method == 'vos' and epoch >= 5:
+                model.fit_gauss()
             net_losses.append(np.mean(net_l))
             acc, acc_u, acc_l = [], [], []
-            if (1+epoch) % 2 == 0:
+            if (1 + epoch) % 2 == 0:
                 with torch.no_grad():
                     pbar = tqdm(enumerate(v_dataloader, 0))
                     for i, data in pbar:
                         t_imgs, t_lbls, _, _ = data
                         t_imgs = t_imgs.cuda()
                         t_lbls = t_lbls.cuda()
-                        #with torch.cuda.amp.autocast():
+                        # with torch.cuda.amp.autocast():
                         obj = model.evaluate_classification(t_imgs, samples=5, std_multiplier=2)
                         predicted = torch.argmax(obj['sp'], dim=1)
                         acc.append((predicted.int() == t_lbls.int()).float())
@@ -191,7 +197,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                         predicted_lower = torch.argmax(obj['sp_l'], dim=1)
                         acc_l.append((predicted_lower.int() == t_lbls.int()).float())
                         accuracy_l = torch.cat(acc, dim=0).mean().cpu()
-                        pbar.set_description(f'runn acc = {accuracy:.3f}, runn acc_u = {accuracy_u:.3f}, runn acc_l = {accuracy_l:.3f}')
+                        pbar.set_description(
+                            f'runn acc = {accuracy:.3f}, runn acc_u = {accuracy_u:.3f}, runn acc_l = {accuracy_l:.3f}')
 
                         # tqdm_dl.set_postfix(f"mean Loss {}")
 
@@ -230,14 +237,11 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                     'loss': np.mean(net_l),
                     'classes': key_to_class,
 
-
-                }, f"ckpts/{model_name}_{wandb.config.method}_{1+epoch}.pt")
-
+                }, f"ckpts/{model_name}_{wandb.config.method}_{1 + epoch}.pt")
 
                 wandb.log(log_dict)
                 if wandb.config.method == 'vos':
-                    cn = torch.stack([(x != 0).sum() for x in model.running_means]).sum()/(len(model.running_means))
-                    print(f'len: {cn}, μ: {model.vos_mean.mean()}, σ: {model.vos_std.mean()}')
+                    print(f'μ: {model.vos_mean.mean()}, σ: {model.vos_std.mean()}')
         wandb.finish()
 
     except Exception as e:
@@ -247,6 +251,6 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
 
 if __name__ == "__main__":
-    path = r'Q:\uncert_data\ds1_wo_f'
+    path = r'Q:\uncert_data\data_cifar_cleaned'
     for name, z in zip(['vos', 'dropout', 'bayes'], [1e-5, 1e-4, 1e-2]):
         run_net(path, False, net_method=name, lr=z)

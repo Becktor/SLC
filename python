@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+source /mnt/q/git/SLC/lvenv/bin/activate
+python "$@"

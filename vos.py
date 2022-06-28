@@ -5,24 +5,6 @@ import torch.nn.functional as F
 torch.manual_seed(0)
 
 
-def log_sum_exp(value, weight_energy, dim=None, keepdim=False):
-    """Numerically stable implementation of the operation
-
-    value.exp().sum(dim, keepdim).log()
-    """
-    if dim is not None:
-        m, _ = torch.max(value, dim=dim, keepdim=True)
-        value0 = value - m
-        if keepdim is False:
-            m = m.squeeze(dim)
-        return m + torch.log(torch.sum(
-            F.relu(weight_energy.weight) * torch.exp(value0), dim=dim, keepdim=keepdim))
-    else:
-        m = torch.max(value)
-        sum_exp = torch.sum(torch.exp(value - m))
-        return m + torch.log(sum_exp)
-
-
 def vos_update(model, vos_dict):
     sum_temp = 0
     for index in range(vos_dict["num_classes"]):
@@ -65,36 +47,42 @@ def vos_update(model, vos_dict):
             # breakpoint()
             # index_prob = (prob_density < - self.threshold).nonzero().view(-1)
             # keep the data in the low density area.
-            cur_samples, index_prob = torch.topk(- prob_density, vos_dict["select"])
+            cur_samples, index_prob = torch.topk(-prob_density, vos_dict["select"])
             if index == 0:
                 ood_samples = negative_samples[index_prob]
             else:
                 ood_samples = torch.cat((ood_samples, negative_samples[index_prob]), 0)
         if len(ood_samples) != 0:
             # add some gaussian noise
-            energy_score_for_fg = log_sum_exp(vos_dict['pred'], model.weight_energy, 1)
+            energy_score_for_fg = model.log_sum_exp(vos_dict['pred'], 1)
             #clm = model.idd_mean.cuda() + model.idd_std.cuda() * 2
             #energy_score_for_fg = torch.clamp_max(energy_score_for_fg, clm)
             predictions_ood = model.fc(ood_samples)
-            energy_score_for_bg = log_sum_exp(predictions_ood, model.weight_energy, 1)
+            energy_score_for_bg = model.log_sum_exp(predictions_ood, 1)
 
             input_for_lr = torch.cat((energy_score_for_fg, energy_score_for_bg), -1)
             labels_for_lr = torch.cat((torch.ones(len(vos_dict['output'])).cuda(),
                                        torch.zeros(len(ood_samples)).cuda()), -1)
 
-            criterion = torch.nn.CrossEntropyLoss()
+            criterion = torch.nn.CrossEntropyLoss()#torch.tensor([1, 1-labels_for_lr.float().mean()]))
+            criterion.cuda()
             output1 = model.logistic_regression(input_for_lr.view(-1, 1))
-            lr_reg_loss = criterion(output1, labels_for_lr.long())
 
-            if vos_dict["epoch"] >= model.start_epoch * 2:
+            lr_reg_loss = criterion(output1, labels_for_lr.long())
+            #
+            if vos_dict["epoch"] >= model.start_epoch + 1:
                 cls_oh = F.one_hot(vos_dict["target"])
                 energy_fg_oh = energy_score_for_fg.unsqueeze(1)*cls_oh
                 energy_fg_oh_m = energy_fg_oh.sum(0)/(cls_oh.sum(0) + 1e-6)
                 #energy_fg_oh_std = torch.sqrt((((energy_fg_oh_m*cls_oh-energy_fg_oh)**2).sum(0)+1e-6)/(cls_oh.sum(0)))
                 mm = energy_fg_oh_m.mean().detach().repeat(energy_fg_oh_m.shape[0], 1).reshape(-1)
-                gauss_nll_loss = torch.nn.MSELoss()(energy_fg_oh_m, mm)
-                gauss_nll_loss += torch.nn.MSELoss()(energy_fg_oh_m, model.vos_mean.detach())
-                gauss_nll_loss /= 2
+                if energy_fg_oh_m.shape[0] == 8:
+                    MSE = torch.nn.MSELoss()
+                    squeeze = MSE(energy_fg_oh_m, mm)
+                    gauss_nll_loss = torch.max(gauss_nll_loss, squeeze - model.vos_std.detach())
+                    gauss_nll_loss += MSE(energy_fg_oh_m, model.vos_means.detach()) * 0.1
+                    gauss_nll_loss += MSE(energy_score_for_bg.mean(), (model.vos_mean - model.vos_std * 3).detach()) * 0.1
+                    gauss_nll_loss /= 2
 
             #var = torch.max((energy_fg_oh_m * cls_oh - energy_fg_oh) ** 2, 1)[0]
 
@@ -118,6 +106,7 @@ def vos_update(model, vos_dict):
             #     gauss_nll_loss /= 1
             #kl_true_bg = curr_dist.rsample(energy_score_for_bg.shape)
             #kl_loss_bg = 0#torch.log(1 + kl_crit(-energy_score_for_bg, kl_true_bg))
+
 
     else:
         target_numpy = vos_dict['target'].cpu().data.numpy()
