@@ -12,11 +12,14 @@ from gmm import GaussianMixture as GMM
 from torchvision.models import resnet18, mobilenetv3
 import numpy as np
 from helper_functions.loss import FocalLoss
+from functools import partial
+from mobileNetV3 import MobileNetV3
+from wrn import WideResNet
+
 
 def eval_samples(model, x, samples=10, std_multiplier=2):
     outputs = [model.predict(x) for _ in range(samples)]
     output_stack = torch.stack(outputs)
-    # log_sum_exps = model.log_sum_exp(output_stack, dim=2)
     log_sum_exps = torch.logsumexp(output_stack, dim=2)
     lse_m = log_sum_exps.mean(0)
     lse_std = log_sum_exps.std(0)
@@ -27,7 +30,8 @@ def eval_samples(model, x, samples=10, std_multiplier=2):
     softmax_upper = means + (std_multiplier * stds)
     softmax_lower = means - (std_multiplier * stds)
     return {'mean': means, 'stds': stds, 'sp': means, 'sp_u': softmax_upper,
-            'sp_l': softmax_lower, 'preds': soft_stack, 'lse': log_sum_exps, 'lse_m': lse_m, 'lse_s': lse_std}
+            'sp_l': softmax_lower, 'preds': soft_stack, 'lse': log_sum_exps,
+            'lse_m': lse_m, 'lse_s': lse_std, 'o': output_stack}
 
 
 def autopad(k, p=None):  # kernel, padding
@@ -124,7 +128,7 @@ class TTAModel(nn.Module):
 
 
 class SuperDropout(nn.Module):
-    def __init__(self, p=0.5, pt=0.2):
+    def __init__(self, p=0.5, pt=0.1):
         super().__init__()
         self.p = p
         self.pt = pt
@@ -280,13 +284,13 @@ class FocalLosses(nn.CrossEntropyLoss):
         target = target * (target != self.ignore_index).long()
         input_prob = torch.gather(F.softmax(input_, 1), 1, target.unsqueeze(1))
         loss = torch.pow(1 - input_prob, self.gamma) * cross_entropy
-        return torch.mean(loss) if self.reduction == 'mean'\
-               else torch.sum(loss) if self.reduction == 'sum'\
-               else loss
+        return torch.mean(loss) if self.reduction == 'mean' \
+            else torch.sum(loss) if self.reduction == 'sum' \
+            else loss
 
 
 class VOSModel(nn.Module):
-    def __init__(self, model_name="gluon_resnext50_32x4d", n_classes=8, drop_rate=0.5, start_epoch=20,
+    def __init__(self, model_name="gluon_resnext50_32x4d", n_classes=8, drop_rate=0.3, start_epoch=40,
                  vos_multivariate_dim=128):
         super(VOSModel, self).__init__()
         self.start_epoch = start_epoch
@@ -296,23 +300,40 @@ class VOSModel(nn.Module):
             resnet = resnet18(pretrained=True)
             self.model = torch.nn.Sequential(*list(resnet.children())[:-1])
         elif 'mobilenet_v3' in model_name:
-            resnet = mobilenetv3.mobilenet_v3_large(pretrained=True)
-            self.model = torch.nn.Sequential(*list(resnet.children())[:-1])
+            self.model = MobileNetV3("small", classes_num=n_classes, input_size=32)
+            in_channels = 576
+            out_channels = 1024
+            # resnet = mobilenetv3.mobilenet_v3_small(pretrained=True,
+            # norm_layer=partial(nn.BatchNorm2d, momentum=0.1))
+            # self.model = torch.nn.Sequential(*list(resnet.children())[:-1])
+        elif 'wrn' in model_name:
+            self.model = WideResNet(40, n_classes, 2, dropRate=drop_rate)
+            in_channels = 128
+            out_channels = 128
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
+            # SuperDropout(drop_rate),
+            # .Conv2d(in_channels=960, out_channels=1280, kernel_size=1, stride=1,
+            #          padding=0, bias=False),
             SuperDropout(drop_rate),
-            torch.nn.Linear(960, 512),
+            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1,
+                      padding=0, bias=False),
+            nn.ReLU(inplace=True),
             SuperDropout(drop_rate),
-            nn.ReLU(True),
         )
+        self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        self.to_multivariate_variables = torch.nn.Linear(512, vos_multivariate_dim)
+        self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         self.fc = torch.nn.Linear(vos_multivariate_dim, n_classes)
         self.weight_energy = torch.nn.Linear(n_classes, 1)
         torch.nn.init.uniform_(self.weight_energy.weight)
+
         self.logistic_regression = torch.nn.Linear(1, 2)
+        self.logistic_regression2 = torch.nn.Linear(n_classes + 1, n_classes + 1)
+        #self.logistic_regression3 = torch.nn.Linear(128, n_classes + 1)
+        #self.logistic_regression4 = torch.nn.Linear(n_classes + 1, n_classes + 1)
 
         self.running_means = []
         self.running_vars = []
@@ -327,11 +348,11 @@ class VOSModel(nn.Module):
         self.vos_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         # self.idd_mean = torch.tensor(15.0)
         # self.idd_std = torch.tensor(1.0)
-        self.running_ood_samples = torch.zeros(200)
+        self.running_ood_samples = torch.zeros(500)
         self.ood_mean = torch.tensor(0.0)
         self.ood_std = torch.tensor(1.0)
 
-        self.loss_fn = nn.CrossEntropyLoss()#FocalLosses(gamma=1.2, reduction='mean')
+        self.loss_fn = nn.CrossEntropyLoss()  # FocalLosses(gamma=1.2, reduction='mean')
 
     def fit_gmm(self):
         means, stds = [], []
@@ -358,11 +379,16 @@ class VOSModel(nn.Module):
         self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
         self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
+        self.ood_mean = self.running_ood_samples.mean()
+        if self.running_ood_samples.nonzero().shape[0] > 0:
+            self.ood_std = self.running_ood_samples.std()
+
     def log_sum_exp(self, value, dim=None, keepdim=False):
         """Numerically stable implementation of the operation
 
         value.exp().sum(dim, keepdim).log()
         """
+        return torch.logsumexp(value, dim=dim)
         if dim is not None:
             m, _ = torch.max(value, dim=dim, keepdim=True)
             value0 = value - m
@@ -375,13 +401,40 @@ class VOSModel(nn.Module):
             sum_exp = torch.sum(torch.exp(value - m))
             return m + torch.log(sum_exp)
 
-    def forward_step(self, x):
-        x = self.model(x)
+    def ood_pred(self, x):
+        lse = self.log_sum_exp(x, dim=1)
+        # out_1 = torch.nn.LeakyReLU(inplace=True)(lse.unsqueeze(1))
+        # out_1 = self.logistic_regression(out_1)
+        pred = torch.argmax(x, 1)
+        run_means = [self.vos_means[t] for t in pred]
+        run_means = torch.stack(run_means)
+        run_stds = [self.vos_stds[t] for t in pred]
+        run_stds = torch.stack(run_stds)
+        # out_2 = self.logistic_regression(gg.view(-1, 1))
+
+        # out_1 = torch.softmax(out_1, 1)
+        # output = torch.cat((x, out_1, out_2), 1)
+        out_j = (run_means - run_stds) - lse
+        #out_j = run_means - lse
+        output = torch.cat((x, out_j.unsqueeze(1)), 1)
+        output = torch.nn.Hardswish(inplace=True)(output)
+        output2 = self.logistic_regression2(output)
+        #output2 = torch.nn.Hardswish(inplace=True)(output2)
+        #output3 = self.logistic_regression3(output2)
+        #output3 = torch.nn.Hardswish(inplace=True)(output3)
+        output3 = output2 + torch.cat((x, torch.zeros_like(out_j).unsqueeze(1).cuda()), 1)
+        return output3
+
+
+    def forward_step(self, inp):
+        x = self.model.get_features(inp)
         x = self.global_pool(x)
-        x = x.view(x.size(0), -1)
         x = self.classifier(x)
-        output = self.to_multivariate_variables(x)
+        x = x.view(x.size(0), -1)
+        x = self.to_multivariate_variables(x)
+        output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
+        # pred = nn.ReLU(inplace=True)(pred)
         return pred, output
 
     def update_lse(self, pred, target):
@@ -391,13 +444,13 @@ class VOSModel(nn.Module):
         cls_means = {}
         for x, y in enumerate(pred_idc):
             y = int(y)
-            if target[x] != y:
-                self.running_ood_samples[0] = lse[x]
-                self.running_ood_samples = self.running_ood_samples.roll(1)
-            elif y not in cls_means:
+            if y not in cls_means:
                 cls_means[y] = lse[x].unsqueeze(0)
             else:
                 cls_means[y] = torch.cat([cls_means[y], lse[x].unsqueeze(0)])
+            if target[x] != y:
+                self.running_ood_samples[0] = lse[x]
+                self.running_ood_samples = self.running_ood_samples.roll(1)
 
         for k, v in cls_means.items():
             try:
@@ -422,7 +475,7 @@ class VOSModel(nn.Module):
         if self.running_ood_samples.sum() != 0:
             nonzero_samples = self.running_ood_samples[self.running_ood_samples.nonzero(as_tuple=True)]
             if nonzero_samples.shape[0] > 1:
-                self.ood_mean = nonzero_samples.mean(0).detach() * 0.9
+                self.ood_mean = nonzero_samples.mean(0).detach()
                 self.ood_std = nonzero_samples.std(0).detach()
 
     def cdf_class(self, x, c):
@@ -441,6 +494,10 @@ class VOSModel(nn.Module):
             self.update_lse(pred, y)
         return [pred, output]
 
+    def calibrate_means_stds(self, means, stds):
+        self.vos_means = means
+        self.vos_stds = stds
+
     # def forward(self, x):
     #     pred, _ = self.forward_vos(x)
     #     return pred
@@ -454,7 +511,27 @@ class VOSModel(nn.Module):
                                 preds,
                                 samples=10,
                                 std_multiplier=2):
-        return eval_samples(self, preds, samples, std_multiplier)
+        return self.eval_samples(preds, samples, std_multiplier)
+
+    def eval_samples(self, x, samples=10, std_multiplier=2):
+        outputs = [self.predict(x) for _ in range(samples)]
+        output_stack = torch.stack(outputs)
+        #logistic_reg = [self.ood_pred(output) for output in outputs]
+        #lr_stack = torch.stack(logistic_reg)
+        #lr_soft = torch.softmax(lr_stack, dim=-1)
+        log_sum_exps = self.log_sum_exp(output_stack, dim=2)
+        #log_sum_exps = torch.logsumexp(output_stack, dim=2)
+        lse_m = log_sum_exps.mean(0)
+        lse_std = log_sum_exps.std(0)
+        preds = [torch.softmax(output, dim=1) for output in outputs]
+        soft_stack = torch.stack(preds)
+        means = soft_stack.mean(axis=0)
+        stds = soft_stack.std(axis=0)
+        softmax_upper = means + (std_multiplier * stds)
+        softmax_lower = means - (std_multiplier * stds)
+        return {'mean': means, 'stds': stds, 'sp': means, 'sp_u': softmax_upper,
+                'sp_l': softmax_lower, 'preds': soft_stack, 'lse': log_sum_exps,
+                'lse_m': lse_m, 'lse_s': lse_std, 'o': output_stack}#, 'lrs': lr_stack, 'lr_soft': lr_soft}
 
     def loss(self, x, y):
         return self.loss_fn(x, y)

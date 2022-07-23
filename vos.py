@@ -10,8 +10,9 @@ def vos_update(model, vos_dict):
     for index in range(vos_dict["num_classes"]):
         sum_temp += vos_dict["number_dict"][index]
     lr_reg_loss = torch.zeros(1).cuda()[0]
+    xe_outlier = torch.zeros(1).cuda()[0]
     gauss_nll_loss = torch.zeros(1).cuda()[0]
-    kl_loss_bg = torch.zeros(1).cuda()[0]
+
     if sum_temp == vos_dict["num_classes"] * vos_dict["sample_number"] and vos_dict["epoch"] < model.start_epoch:
         # maintaining an ID data queue for each class.
         target_numpy = vos_dict["target"].cpu().data.numpy()
@@ -54,35 +55,68 @@ def vos_update(model, vos_dict):
                 ood_samples = torch.cat((ood_samples, negative_samples[index_prob]), 0)
         if len(ood_samples) != 0:
             # add some gaussian noise
-            energy_score_for_fg = model.log_sum_exp(vos_dict['pred'], 1)
-            #clm = model.idd_mean.cuda() + model.idd_std.cuda() * 2
-            #energy_score_for_fg = torch.clamp_max(energy_score_for_fg, clm)
+            predictions_iid = vos_dict['pred']
+            energy_score_for_fg = model.log_sum_exp(predictions_iid, 1)
             predictions_ood = model.fc(ood_samples)
             energy_score_for_bg = model.log_sum_exp(predictions_ood, 1)
 
             input_for_lr = torch.cat((energy_score_for_fg, energy_score_for_bg), -1)
+
+            input_for_lr_2 = torch.cat((predictions_iid, predictions_ood), 0)
             labels_for_lr = torch.cat((torch.ones(len(vos_dict['output'])).cuda(),
                                        torch.zeros(len(ood_samples)).cuda()), -1)
 
-            criterion = torch.nn.CrossEntropyLoss()#torch.tensor([1, 1-labels_for_lr.float().mean()]))
-            criterion.cuda()
-            output1 = model.logistic_regression(input_for_lr.view(-1, 1))
+            lbl2 = torch.cat((vos_dict['target'], torch.ones(len(ood_samples)).cuda() * vos_dict["num_classes"]), -1)
 
-            lr_reg_loss = criterion(output1, labels_for_lr.long())
+            #crit 1
+            criterion = torch.nn.CrossEntropyLoss()
+            #out_1 = torch.nn.LeakyReLU(inplace=True)(input_for_lr)
+            out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
+            lr_reg_loss = criterion(out_1, labels_for_lr.long())
+
+            #out_2model.logistic_regression((gg-input_for_lr).view(-1, 1))
+
+            #pred = torch.argmax(input_for_lr_2, 1)
+            #run_means = [model.vos_means[t] for t in pred]
+            #run_means = torch.stack(run_means).cuda()
+            #run_stds = [model.vos_stds[t] for t in pred]
+            #run_stds = torch.stack(run_stds).cuda()
+            #out_j = gg-input_for_lr
+            #out_2 = model.logistic_regression(gg.view(-1, 1))
+
+            #crit 2
+            #weight_crit2 = torch.ones(vos_dict["num_classes"] + 1).cuda()
+            #weight_crit2[-1] = .5 #1/vos_dict["num_classes"]#/vos_dict["bs"]
+            #criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
+            #lin2 = model.logistic_regression2(input_for_lr_2.view(-1, 1))
+            #out_j = torch.abs((run_means-run_stds)/input_for_lr)-1
+            #out_j = (run_means - run_stds) - input_for_lr
+            #output = torch.cat((input_for_lr_2, out_1, out_2), 1)
+            #output = torch.cat((input_for_lr_2, out_j.unsqueeze(1)), 1)
+            #output = torch.nn.Hardswish(inplace=True)(output)
+            #residual = model.logistic_regression2(output)
+            #output2 = torch.nn.Hardswish(inplace=True)(output2)
+            #residual = model.logistic_regression3(output2)
+            #output3 = torch.nn.Hardswish(inplace=True)(output3)
+
+            #output3 = residual + torch.cat((input_for_lr_2, torch.zeros_like(out_j).unsqueeze(1).cuda()), 1)
+            #xe_outlier = criterion2(output3, lbl2.long())
             #
+            # #
             if vos_dict["epoch"] >= model.start_epoch + 1:
                 cls_oh = F.one_hot(vos_dict["target"])
-                energy_fg_oh = energy_score_for_fg.unsqueeze(1)*cls_oh
-                energy_fg_oh_m = energy_fg_oh.sum(0)/(cls_oh.sum(0) + 1e-6)
-                #energy_fg_oh_std = torch.sqrt((((energy_fg_oh_m*cls_oh-energy_fg_oh)**2).sum(0)+1e-6)/(cls_oh.sum(0)))
-                mm = energy_fg_oh_m.mean().detach().repeat(energy_fg_oh_m.shape[0], 1).reshape(-1)
-                if energy_fg_oh_m.shape[0] == 8:
+                energy_fg_oh = energy_score_for_fg.unsqueeze(1) * cls_oh
+                energy_fg_oh_m = energy_fg_oh.sum(0) / (cls_oh.sum(0) + 1e-6)
+                # energy_fg_oh_std = torch.sqrt((((energy_fg_oh_m*cls_oh-energy_fg_oh)**2).sum(0)+1e-6)/(cls_oh.sum(0)))
+                # mm = energy_fg_oh_m.mean().detach().repeat(energy_fg_oh_m.shape[0], 1).reshape(-1)
+                if energy_fg_oh_m.shape[0] == 10:
                     MSE = torch.nn.MSELoss()
-                    squeeze = MSE(energy_fg_oh_m, mm)
-                    gauss_nll_loss = torch.max(gauss_nll_loss, squeeze - model.vos_std.detach())
-                    gauss_nll_loss += MSE(energy_fg_oh_m, model.vos_means.detach()) * 0.1
-                    gauss_nll_loss += MSE(energy_score_for_bg.mean(), (model.vos_mean - model.vos_std * 3).detach()) * 0.1
-                    gauss_nll_loss /= 2
+                    gauss_nll_loss = MSE(energy_fg_oh_m, torch.abs(model.vos_means + model.vos_stds).detach()) * 0.001
+                    # torch.max(torch.tensor(12), torch.abs(model.vos_means.detach())))
+                    # gauss_nll_loss = torch.max(gauss_nll_loss, squeeze - model.vos_stds.detach()) * 0.01
+                    gauss_nll_loss += MSE(energy_score_for_bg, (model.vos_means - model.vos_stds * 3).detach()) * 0.001
+                    # gauss_nll_loss += MSE(energy_score_for_fg.mean(), (model.vos_mean + model.vos_std * 2).detach()) * 0.005
+
 
             #var = torch.max((energy_fg_oh_m * cls_oh - energy_fg_oh) ** 2, 1)[0]
 
@@ -115,4 +149,18 @@ def vos_update(model, vos_dict):
             if vos_dict['number_dict'][dict_key] < vos_dict['sample_number']:
                 vos_dict['data_dict'][dict_key][vos_dict['number_dict'][dict_key]] = vos_dict['output'][index].detach()
                 vos_dict['number_dict'][dict_key] += 1
-    return lr_reg_loss, gauss_nll_loss, kl_loss_bg
+    return lr_reg_loss, xe_outlier, gauss_nll_loss
+
+def hist_train_samples(model):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    ad = []
+    for i,x in enumerate(model.training_outputs):
+        d = x.detach().cpu().numpy()
+        plt.hist(d, bins=50)
+        plt.show()
+        plt.title(f'm: {i}')
+        ad.append(d)
+    plt.hist(np.concatenate(ad), bins=100)
+    plt.title('all')
+    plt.show()
