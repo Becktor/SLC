@@ -128,7 +128,7 @@ class TTAModel(nn.Module):
 
 
 class SuperDropout(nn.Module):
-    def __init__(self, p=0.5, pt=0.1):
+    def __init__(self, p=0.5, pt=0.10):
         super().__init__()
         self.p = p
         self.pt = pt
@@ -332,15 +332,15 @@ class VOSModel(nn.Module):
 
         self.logistic_regression = torch.nn.Linear(1, 2)
         self.logistic_regression2 = torch.nn.Linear(n_classes + 1, n_classes + 1)
-        #self.logistic_regression3 = torch.nn.Linear(128, n_classes + 1)
+        self.logistic_regression3 = torch.nn.Linear(128, n_classes + 1)
         #self.logistic_regression4 = torch.nn.Linear(n_classes + 1, n_classes + 1)
 
         self.running_means = []
         self.running_vars = []
-        self.training_outputs = []
+        self.training_outputs = {}
         self.at_epoch = 0
-        for _ in range(n_classes):
-            self.training_outputs.append(torch.zeros(2000).cuda())
+        for i in range(n_classes):
+            self.training_outputs[i] = torch.zeros(2000).cuda()
 
         self.vos_means = nn.Parameter(torch.zeros([n_classes, ]), requires_grad=False)
         self.vos_stds = nn.Parameter(torch.ones([n_classes, ]), requires_grad=False)
@@ -349,14 +349,15 @@ class VOSModel(nn.Module):
         # self.idd_mean = torch.tensor(15.0)
         # self.idd_std = torch.tensor(1.0)
         self.running_ood_samples = torch.zeros(500)
-        self.ood_mean = torch.tensor(0.0)
-        self.ood_std = torch.tensor(1.0)
+        self.ood_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
+        self.ood_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
         self.loss_fn = nn.CrossEntropyLoss()  # FocalLosses(gamma=1.2, reduction='mean')
 
     def fit_gmm(self):
         means, stds = [], []
-        for k, x in enumerate(self.training_outputs):
+        for i in range(len(self.training_outputs)):
+            x = self.training_outputs[i]
             gmm = GMM(n_components=2, n_features=1, covariance_type='diag')
             gmm.cuda()
             gmm.fit(x[x.nonzero()])
@@ -368,20 +369,27 @@ class VOSModel(nn.Module):
 
     def fit_gauss(self):
         means, stds = [], []
-        for k, x in enumerate(self.training_outputs):
-            means.append(torch.mean(x, dim=0))
-            stds.append(torch.std(x, dim=0))
+        all_val = torch.cat(list(self.training_outputs.values())).flatten()
+        all_val = all_val[all_val.nonzero()]
+        if all_val.sum() == 0:
+            return
 
-        all_val = torch.stack(self.training_outputs)
+        for i in range(len(self.training_outputs)):
+            x = self.training_outputs[i]
+            x = x[x.nonzero()]
+            means.append(x.mean())
+            stds.append(x.std())
+
         self.vos_mean = torch.nn.Parameter(all_val.mean(), requires_grad=False)
         self.vos_std = torch.nn.Parameter(all_val.std(), requires_grad=False)
 
         self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
         self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
-        self.ood_mean = self.running_ood_samples.mean()
+
+        self.ood_mean = nn.Parameter(self.running_ood_samples.mean(), requires_grad=False)
         if self.running_ood_samples.nonzero().shape[0] > 0:
-            self.ood_std = self.running_ood_samples.std()
+            self.ood_std = nn.Parameter(self.running_ood_samples.std(), requires_grad=False)
 
     def log_sum_exp(self, value, dim=None, keepdim=False):
         """Numerically stable implementation of the operation
@@ -404,27 +412,31 @@ class VOSModel(nn.Module):
     def ood_pred(self, x):
         lse = self.log_sum_exp(x, dim=1)
         # out_1 = torch.nn.LeakyReLU(inplace=True)(lse.unsqueeze(1))
-        # out_1 = self.logistic_regression(out_1)
+        out_1 = self.logistic_regression(lse.unsqueeze(1))
         pred = torch.argmax(x, 1)
         run_means = [self.vos_means[t] for t in pred]
         run_means = torch.stack(run_means)
         run_stds = [self.vos_stds[t] for t in pred]
         run_stds = torch.stack(run_stds)
-        # out_2 = self.logistic_regression(gg.view(-1, 1))
+        #run_norms = torch.distributions.normal.Normal(run_means, run_stds)
+        #out_2 = (1-run_norms.cdf(lse)) * 2 - 1
+        # out_2 = torch.nn.LeakyReLU()(out_2)
+        #out_j = (run_means * out_2) #(torch.pow(run_means+run_stds, 2) / torch.pow(lse, 2))
+        out_s = torch.softmax(out_1, 1)
+        #ood_dist = torch.distributions.normal.Normal(self.ood_mean, self.ood_std)
 
-        # out_1 = torch.softmax(out_1, 1)
-        # output = torch.cat((x, out_1, out_2), 1)
-        out_j = (run_means - run_stds) - lse
-        #out_j = run_means - lse
-        output = torch.cat((x, out_j.unsqueeze(1)), 1)
-        output = torch.nn.Hardswish(inplace=True)(output)
-        output2 = self.logistic_regression2(output)
-        #output2 = torch.nn.Hardswish(inplace=True)(output2)
-        #output3 = self.logistic_regression3(output2)
-        #output3 = torch.nn.Hardswish(inplace=True)(output3)
-        output3 = output2 + torch.cat((x, torch.zeros_like(out_j).unsqueeze(1).cuda()), 1)
-        return output3
-
+        shifted_means = run_means+self.ood_mean - lse
+        out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)
+        #s = torch.softmax(x, 1)
+        output = torch.cat((x, out_j), 1)
+        # #output = (run_means - run_stds).unsqueeze(1) - x
+        # output = torch.nn.LeakyReLU(inplace=True)(output)
+        #residual = self.logistic_regression2(output)
+        # output2 = torch.nn.LeakyReLU(inplace=True)(output2)
+        # residual = self.logistic_regression3(output2)
+        #residual = torch.nn.LeakyReLU(inplace=True)(residual)
+        #output3 = residual + torch.cat((x, torch.zeros_like(run_means).unsqueeze(1).cuda()), 1)
+        return output
 
     def forward_step(self, inp):
         x = self.model.get_features(inp)
@@ -444,13 +456,13 @@ class VOSModel(nn.Module):
         cls_means = {}
         for x, y in enumerate(pred_idc):
             y = int(y)
-            if y not in cls_means:
-                cls_means[y] = lse[x].unsqueeze(0)
-            else:
-                cls_means[y] = torch.cat([cls_means[y], lse[x].unsqueeze(0)])
             if target[x] != y:
                 self.running_ood_samples[0] = lse[x]
                 self.running_ood_samples = self.running_ood_samples.roll(1)
+            elif y not in cls_means:
+                cls_means[y] = lse[x].unsqueeze(0)
+            else:
+                cls_means[y] = torch.cat([cls_means[y], lse[x].unsqueeze(0)])
 
         for k, v in cls_means.items():
             try:
@@ -460,23 +472,6 @@ class VOSModel(nn.Module):
             except:
                 print(k, v.shape)
 
-            # self.running_vars[k][0] = torch.tensor(1) if v.var().isnan() else v.var()
-            # self.running_vars[k] = self.running_vars[k].roll(1)
-        #     idx = self.running_means[k] != 0
-        #     self.vos_mean[k] = self.running_means[k][idx].mean()
-        #     self.vos_std[k] = torch.sqrt(self.running_vars[k][idx].mean())
-        #
-        # all_means = torch.stack(self.running_means).detach()
-        # all_vars = torch.stack(self.running_vars).detach()
-        # all_means = all_means[all_means.nonzero(as_tuple=True)]
-        # all_vars = all_vars[all_vars.nonzero(as_tuple=True)]
-        # self.idd_mean = all_means.mean()
-        # self.idd_std = torch.sqrt(all_vars.mean())
-        if self.running_ood_samples.sum() != 0:
-            nonzero_samples = self.running_ood_samples[self.running_ood_samples.nonzero(as_tuple=True)]
-            if nonzero_samples.shape[0] > 1:
-                self.ood_mean = nonzero_samples.mean(0).detach()
-                self.ood_std = nonzero_samples.std(0).detach()
 
     def cdf_class(self, x, c):
         norm = torch.distributions.normal.Normal(self.vos_means[c], self.vos_stds[c])
@@ -490,13 +485,13 @@ class VOSModel(nn.Module):
 
     def forward(self, x, y=None):
         pred, output = self.forward_step(x)
-        if self.at_epoch >= self.start_epoch and y is not None:
+        if y is not None and self.at_epoch >= (self.start_epoch-1):
             self.update_lse(pred, y)
         return [pred, output]
 
     def calibrate_means_stds(self, means, stds):
-        self.vos_means = means
-        self.vos_stds = stds
+        self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
+        self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
     # def forward(self, x):
     #     pred, _ = self.forward_vos(x)
@@ -516,9 +511,9 @@ class VOSModel(nn.Module):
     def eval_samples(self, x, samples=10, std_multiplier=2):
         outputs = [self.predict(x) for _ in range(samples)]
         output_stack = torch.stack(outputs)
-        #logistic_reg = [self.ood_pred(output) for output in outputs]
-        #lr_stack = torch.stack(logistic_reg)
-        #lr_soft = torch.softmax(lr_stack, dim=-1)
+        logistic_reg = [self.ood_pred(output) for output in outputs]
+        lr_stack = torch.stack(logistic_reg)
+        lr_soft = torch.softmax(lr_stack, dim=-1)
         log_sum_exps = self.log_sum_exp(output_stack, dim=2)
         #log_sum_exps = torch.logsumexp(output_stack, dim=2)
         lse_m = log_sum_exps.mean(0)
@@ -531,7 +526,7 @@ class VOSModel(nn.Module):
         softmax_lower = means - (std_multiplier * stds)
         return {'mean': means, 'stds': stds, 'sp': means, 'sp_u': softmax_upper,
                 'sp_l': softmax_lower, 'preds': soft_stack, 'lse': log_sum_exps,
-                'lse_m': lse_m, 'lse_s': lse_std, 'o': output_stack}#, 'lrs': lr_stack, 'lr_soft': lr_soft}
+                'lse_m': lse_m, 'lse_s': lse_std, 'o': output_stack, 'lrs': lr_stack, 'lr_soft': lr_soft}
 
     def loss(self, x, y):
         return self.loss_fn(x, y)
@@ -731,3 +726,33 @@ class VOSBayes(nn.Module):
                                 criterion=self.loss_fn,
                                 sample_nbr=self.sample_rate,
                                 complexity_cost_weight=self.k_comp)
+
+
+class GroupSort(nn.Module):
+    def __init__(self, group_size, axis=-1, new_impl=True):
+        super(GroupSort, self).__init__()
+        self.group_size = group_size
+        self.axis = axis
+        self.new_impl = new_impl
+
+    def forward(self, x):
+        group_sorted = self._group_sort(x)
+        return group_sorted
+
+    def extra_repr(self):
+        return "group_size={group_size}, axis={axis}".format(**self.__dict__)
+
+    def _group_sort(self, x):
+        if self.new_impl and self.group_size == 2:
+            a, b = x.split(x.size(self.axis) // 2, self.axis)
+            a, b = torch.max(a, b), torch.min(a, b)
+            return torch.cat([a, b], dim=self.axis)
+        shape = list(x.shape)
+        num_channels = shape[self.axis]
+        assert num_channels % self.group_size == 0
+        shape[self.axis] = num_channels // self.group_size
+        shape.insert(self.axis, self.group_size)
+        if self.axis < 0:
+            self.axis -= 1
+        assert shape[self.axis] == self.group_size
+        return x.view(*shape).sort(dim=self.axis)[0].view(*x.shape)

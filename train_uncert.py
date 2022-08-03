@@ -195,13 +195,13 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                     vos_dict["target"] = lbls
                     vos_dict["bs"] = batch_size
                     vos_loss, kl_f, kl_b = vos_update(model, vos_dict)
-                    vos_loss = vos_dict['loss_weight'] * vos_loss
-                    kl_f = kl_f * 1
+                    vos_loss = vos_loss * vos_dict['loss_weight']
+                    kl_f = kl_f
                     kl_b = kl_b * 0.1
                     loss = model.loss(pred, lbls)
-                    cost = loss + vos_loss + kl_f + kl_b
-                    #if cost == 0:
-                    #    cost += loss
+                    cost = vos_loss + kl_f + kl_b
+                    if cost == 0:
+                        cost += loss
 
                 else:
                     # with torch.cuda.amp.autocast():
@@ -249,8 +249,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                         # with torch.cuda.amp.autocast():
                         obj = model.evaluate_classification(t_imgs, samples=2, std_multiplier=2)
                         predicted = torch.argmax(obj['sp'], dim=1)
-                        #if epoch >= start_vos:
-                        #    predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
+                        if epoch >= start_vos:
+                            predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
                         acc.append((predicted.int() == t_lbls.int()).float())
                         accuracy = torch.cat(acc, dim=0).mean().cpu()
                         predicted_upper = torch.argmax(obj['sp_u'], dim=1)
@@ -279,18 +279,20 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                 if len(meta_losses_clean) != 0:
                     log_dict["train/meta_loss_clean"] = np.mean(meta_losses_clean)
                 # if x % 5 == 0 and x > 0:
-                fig, axes = plt.subplots(1, 2, figsize=(13, 5))
-                ax1, ax2 = axes.ravel()
-                fig.suptitle(f"loss and accuracy for model {wandb.config.method}")
-                ax1.plot(net_losses, label='net_losses')
-                ax1.set_ylabel("Losses")
-                ax1.set_xlabel("Iteration")
-                ax1.legend()
-                acc_log = np.concatenate(accuracy_log, axis=0)
-                ax2.plot(acc_log[:, 0], acc_log[:, 1])
-                ax2.set_ylabel('Accuracy')
-                ax2.set_xlabel('Iteration')
-                plt.show()
+                plot = False
+                if plot:
+                    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+                    ax1, ax2 = axes.ravel()
+                    fig.suptitle(f"loss and accuracy for model {wandb.config.method}")
+                    ax1.plot(net_losses, label='net_losses')
+                    ax1.set_ylabel("Losses")
+                    ax1.set_xlabel("Iteration")
+                    ax1.legend()
+                    acc_log = np.concatenate(accuracy_log, axis=0)
+                    ax2.plot(acc_log[:, 0], acc_log[:, 1])
+                    ax2.set_ylabel('Accuracy')
+                    ax2.set_xlabel('Iteration')
+                    plt.show()
 
                 torch.save({
                     'epoch': epoch,

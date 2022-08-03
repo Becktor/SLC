@@ -1,7 +1,7 @@
 import torch
 import torch.nn
 import torch.nn.functional as F
-
+from models import GroupSort
 torch.manual_seed(0)
 
 
@@ -53,10 +53,16 @@ def vos_update(model, vos_dict):
                 ood_samples = negative_samples[index_prob]
             else:
                 ood_samples = torch.cat((ood_samples, negative_samples[index_prob]), 0)
+
         if len(ood_samples) != 0:
             # add some gaussian noise
+            gs_smp1 = GroupSort(2, 0)(ood_samples)
+            #gs_smp2 = GroupSort(5, 0)(ood_samples)
             predictions_iid = vos_dict['pred']
             energy_score_for_fg = model.log_sum_exp(predictions_iid, 1)
+
+            ood_samples = torch.cat((ood_samples, gs_smp1), 0)#, gs_smp2), 0) #
+            #ood_samples = GroupSort(2, 0)(vos_dict["output"])
             predictions_ood = model.fc(ood_samples)
             energy_score_for_bg = model.log_sum_exp(predictions_ood, 1)
 
@@ -74,48 +80,54 @@ def vos_update(model, vos_dict):
             out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
             lr_reg_loss = criterion(out_1, labels_for_lr.long())
 
-            #out_2model.logistic_regression((gg-input_for_lr).view(-1, 1))
+            #out_2=model.logistic_regression((gg-input_for_lr).view(-1, 1))
 
-            #pred = torch.argmax(input_for_lr_2, 1)
-            #run_means = [model.vos_means[t] for t in pred]
-            #run_means = torch.stack(run_means).cuda()
-            #run_stds = [model.vos_stds[t] for t in pred]
-            #run_stds = torch.stack(run_stds).cuda()
-            #out_j = gg-input_for_lr
-            #out_2 = model.logistic_regression(gg.view(-1, 1))
+            pred = torch.argmax(input_for_lr_2, 1)
+            run_means = [model.vos_means[t] for t in pred]
+            run_means = torch.stack(run_means).cuda()
+            run_stds = [model.vos_stds[t] for t in pred]
+            run_stds = torch.stack(run_stds).cuda()
+            # min weight on ood samples. and lower weight of b
 
-            #crit 2
-            #weight_crit2 = torch.ones(vos_dict["num_classes"] + 1).cuda()
-            #weight_crit2[-1] = .5 #1/vos_dict["num_classes"]#/vos_dict["bs"]
-            #criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
-            #lin2 = model.logistic_regression2(input_for_lr_2.view(-1, 1))
-            #out_j = torch.abs((run_means-run_stds)/input_for_lr)-1
-            #out_j = (run_means - run_stds) - input_for_lr
-            #output = torch.cat((input_for_lr_2, out_1, out_2), 1)
-            #output = torch.cat((input_for_lr_2, out_j.unsqueeze(1)), 1)
-            #output = torch.nn.Hardswish(inplace=True)(output)
+            # crit 2
+            weight_crit2 = torch.ones(vos_dict["num_classes"] + 1).cuda()
+            weight_crit2[-1] = 1 / vos_dict["bs"]
+            criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
+            #run_norms = torch.distributions.normal.Normal(run_means, run_stds)
+            #out_2 = (1 - run_norms.cdf(input_for_lr))*2 - 1
+            #out_2 = torch.nn.LeakyReLU()(out_2)
+            out_s = torch.softmax(out_1, 1)
+            shifted_means = run_means + model.ood_mean - input_for_lr
+            out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)#(run_means * out_2).unsqueeze(1)#(torch.pow(run_means + run_stds, 2) / torch.pow(input_for_lr, 2)).unsqueeze(1)
+            #out_j = torch.nn.Tanh()(out_j).unsqueeze(1)
+            #s = torch.softmax(input_for_lr_2, 1)
+            output = torch.cat((input_for_lr_2, out_j), 1)
+            # output = (run_means - run_stds).unsqueeze(1) - input_for_lr_2
             #residual = model.logistic_regression2(output)
-            #output2 = torch.nn.Hardswish(inplace=True)(output2)
-            #residual = model.logistic_regression3(output2)
-            #output3 = torch.nn.Hardswish(inplace=True)(output3)
-
-            #output3 = residual + torch.cat((input_for_lr_2, torch.zeros_like(out_j).unsqueeze(1).cuda()), 1)
-            #xe_outlier = criterion2(output3, lbl2.long())
+            # output2 = torch.nn.LeakyReLU(inplace=True)(output2)
+            # residual = model.logistic_regression3(output2)
+            #residual = torch.nn.LeakyReLU(inplace=True)(residual)
+            #catted = torch.cat((input_for_lr_2, torch.zeros_like(out_j).cuda()), 1)
+            #output3 = catted + residual
+            xe_outlier = criterion2(output, lbl2.long())
+            # BCE = torch.nn.BCEWithLogitsLoss()
+            # inv = (~labels_for_lr.bool()).float()
+            # lr_reg_loss = BCE(output[:128, -1], inv[:128])
             #
             # #
-            if vos_dict["epoch"] >= model.start_epoch + 1:
-                cls_oh = F.one_hot(vos_dict["target"])
-                energy_fg_oh = energy_score_for_fg.unsqueeze(1) * cls_oh
-                energy_fg_oh_m = energy_fg_oh.sum(0) / (cls_oh.sum(0) + 1e-6)
-                # energy_fg_oh_std = torch.sqrt((((energy_fg_oh_m*cls_oh-energy_fg_oh)**2).sum(0)+1e-6)/(cls_oh.sum(0)))
-                # mm = energy_fg_oh_m.mean().detach().repeat(energy_fg_oh_m.shape[0], 1).reshape(-1)
-                if energy_fg_oh_m.shape[0] == 10:
-                    MSE = torch.nn.MSELoss()
-                    gauss_nll_loss = MSE(energy_fg_oh_m, torch.abs(model.vos_means + model.vos_stds).detach()) * 0.001
-                    # torch.max(torch.tensor(12), torch.abs(model.vos_means.detach())))
-                    # gauss_nll_loss = torch.max(gauss_nll_loss, squeeze - model.vos_stds.detach()) * 0.01
-                    gauss_nll_loss += MSE(energy_score_for_bg, (model.vos_means - model.vos_stds * 3).detach()) * 0.001
-                    # gauss_nll_loss += MSE(energy_score_for_fg.mean(), (model.vos_mean + model.vos_std * 2).detach()) * 0.005
+            # if vos_dict["epoch"] >= model.start_epoch + 1:
+            #     cls_oh = F.one_hot(vos_dict["target"])
+            #     energy_fg_oh = energy_score_for_fg.unsqueeze(1) * cls_oh
+            #     energy_fg_oh_m = energy_fg_oh.sum(0) / (cls_oh.sum(0) + 1e-6)
+            #     # energy_fg_oh_std = torch.sqrt((((energy_fg_oh_m*cls_oh-energy_fg_oh)**2).sum(0)+1e-6)/(cls_oh.sum(0)))
+            #     # mm = energy_fg_oh_m.mean().detach().repeat(energy_fg_oh_m.shape[0], 1).reshape(-1)
+            #     if energy_fg_oh_m.shape[0] == 10:
+            #         MSE = torch.nn.MSELoss()
+            #         gauss_nll_loss = MSE(energy_fg_oh_m, torch.abs(model.vos_means).detach()) * 0.01
+            #         # torch.max(torch.tensor(12), torch.abs(model.vos_means.detach())))
+            #         # gauss_nll_loss = torch.max(gauss_nll_loss, squeeze - model.vos_stds.detach()) * 0.01
+            #         gauss_nll_loss += MSE(energy_score_for_bg, (model.vos_means - model.vos_stds * 3).detach()) * 0.001
+            #         # gauss_nll_loss += MSE(energy_score_for_fg.mean(), (model.vos_mean + model.vos_std * 2).detach()) * 0.005
 
 
             #var = torch.max((energy_fg_oh_m * cls_oh - energy_fg_oh) ** 2, 1)[0]

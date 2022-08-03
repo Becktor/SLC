@@ -31,7 +31,6 @@ from itertools import cycle
 from helper_functions.metrics import show_performance_fpr, get_measures, fpr_at_tpr, fpr_tpr
 
 
-
 class TransformWrapper(object):
     def __init__(self, transform, n=1):
         self.trans = transform
@@ -62,7 +61,7 @@ idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [
 
 # train_norms = {4: (22.641314, 2.6660843), 1: (21.820875, 1.7641367), 2: (20.12747, 2.3930283), 8: (13.655789, 1.2330345), 3: (22.682724, 3.5433457), 7: (19.041382, 1.8500489), 5: (20.446945, 2.444383), 6: (18.666367, 2.6390777), 0: (14.238019, 1.7003791), 9: (19.35532, 1.5455061)}
 # train_norms = {4: (-0.20737115, 0.7276402), 1: (0.73767483, 0.46118015), 2: (-0.59243923, 0.6190916), 8: (-1.2136457, 0.52655524), 3: (-0.055931814, 0.6492376), 7: (0.2306215, 0.4722455), 5: (0.035789445, 0.54746556), 6: (0.072558165, 0.50197697), 0: (0.06483747, 0.9217627), 9: (1.0638794, 0.5808415)}
-train_norms = {3: (11.301314, 3.44674), 8: (16.33582, 4.223701), 0: (13.591223, 4.1683364), 6: (14.875906, 4.1625257), 1: (16.833525, 3.5874248), 9: (16.423351, 4.1618752), 5: (13.599762, 4.6079903), 7: (13.88497, 3.836885), 4: (13.668718, 3.78834), 2: (13.060303, 4.114784)}
+train_norms = {3: (14.524206, 3.7952807), 8: (16.462603, 3.505013), 0: (15.083772, 3.6133106), 6: (15.876013, 3.3961341), 1: (15.926863, 2.972654), 9: (15.801685, 3.1206934), 5: (16.131227, 4.2530966), 7: (15.866643, 3.670724), 4: (15.185268, 3.2628465), 2: (14.582853, 3.30371)}
 
 def run_net(root_dir, name=''):
     val_dir = os.path.join(root_dir, 'val_set')
@@ -113,13 +112,18 @@ def run_net(root_dir, name=''):
         unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
         trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
                                                 download=True, transform=transform_train)
-        v_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                                   shuffle=True, num_workers=workers, persistent_workers=True)
+        # v_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+        #                                            shuffle=True, num_workers=workers, persistent_workers=True)
 
         testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                               download=True, transform=transform_test)
+                                              download=True, transform=transform_test)
+
+        # testset = torchvision.datasets.SVHN(root='./data', split='test',
+        #                                          download=True, transform=transform_train)
+        #testset=trainset
         v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                                    shuffle=False, num_workers=workers, persistent_workers=True)
+
         key_to_class = {k: v for k, v in enumerate(trainset.classes)}
 
     n_classes = len(key_to_class.keys())
@@ -135,9 +139,13 @@ def run_net(root_dir, name=''):
     model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
 
-    norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
-    norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in
-                enumerate(zip(model.vos_means, model.vos_stds))}
+    # norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
+    # norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in
+    #                 enumerate(zip(model.vos_means, model.vos_stds))}
+    nms = [norms[v].mean for v in range(len(norms))]
+    stds = [norms[v].stddev for v in range(len(norms))]
+    #
+    model.calibrate_means_stds(nms, stds)
 
     if torch.cuda.is_available():
         model.cuda()
@@ -167,9 +175,9 @@ def run_net(root_dir, name=''):
             else:
                 obj = model.evaluate_classification(t_imgs, samples=10, std_multiplier=2)
 
-            #predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
+            predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
 
-            predicted = torch.argmax(obj['sp'], dim=1)
+            # predicted = torch.argmax(obj['sp'], dim=1)
             total_pred.append(predicted.cpu().numpy())
             total_lbl.append(t_lbls.cpu().numpy())
             acc.append((predicted.int() == t_lbls.int()).float())
@@ -193,23 +201,23 @@ def run_net(root_dir, name=''):
             f = open("wrong_train_c.txt", "a")
             for elem in range(len(obj["mean"])):
                 pr = obj["preds"][:, elem]
-                mean = obj["mean"][elem].cpu().numpy()
+                mean = obj["mean"][elem]
                 std = obj["stds"][elem].cpu().numpy()
 
                 o = obj["o"][:, elem]
 
                 if name == 'vos':
                     ood_m = obj['lse'][:, elem].mean()
-                    #lr_c = #obj['lrs'][:, elem]
-                    lr_s = torch.softmax(obj['o'][:, elem].mean(0), 0) #obj["mean"][elem]#obj['lr_soft'][:, elem].mean(0)
-                    #lr_s2 = torch.softmax(lr_c[:, :-1], 1).mean(0)
+                    # lr_c = #obj['lrs'][:, elem]
+                    lr_s = obj['lr_soft'][:, elem].mean(0)
+                    # lr_s2 = torch.softmax(lr_c[:, :-1], 1).mean(0)
                     # 95% confidence interval 2.5% are out of distribution since we only look at left tail
                     cls = np.argmax(lr_s.cpu().numpy())
                     # cls2 = np.argmax(lr_s2.detach().cpu().numpy())
                     conf_class = torch.tensor(0.0).cuda()
                     if cls != 10:
                         conf_class = norms_scaled[cls].cdf(ood_m)
-                        #ms = (norms[cls].mean) - obj['lse'][:, elem]
+                        # ms = (norms[cls].mean) - obj['lse'][:, elem]
 
                     if cls in cls_hist:
                         cls_hist[cls].append(ood_m.cpu().numpy())
@@ -219,7 +227,7 @@ def run_net(root_dir, name=''):
                 o = obj['o'][:, elem]
                 # torch_pred = torch.softmax(torch.concat([o, ms.unsqueeze(1)], dim=-1), dim=-1)
                 # torch_pred = torch.nn.functional.normalize(o, dim=1)#(o-o.min())/(o.max()-o.min()) #obj["preds"][:, elem]
-                torch_pred = pr#obj['lr_soft'][:, elem]
+                torch_pred = obj['lr_soft'][:, elem]
                 pred_ent = met.predictive_entropy(torch_pred)
                 expected_ent = met.expected_entropy(torch_pred)
                 ee.append(expected_ent)
@@ -230,14 +238,14 @@ def run_net(root_dir, name=''):
                 dlrs = lr_s.detach().cpu().numpy()
                 pred_cert.append((dlrs,
                                   conf_class.detach().cpu().numpy()))
-                                 # torch.max(torch_pred, 0)[0].detach().cpu().numpy()))
-                #if cls != 10:
-                pred_soft.append((dlrs, dlrs[cls], lbl[elem].cpu().numpy()))
-                # else:
-                #     pred_soft.append((dlrs, dlrs[cls], 10))
+                # torch.max(torch_pred, 0)[0].detach().cpu().numpy()))
+                if cls != 10:
+                    pred_soft.append((dlrs, dlrs[cls], lbl[elem].cpu().numpy()))
+                else:
+                    pred_soft.append((dlrs, dlrs[cls], np.array(10)))
 
                 # f.write(f'{p[elem]},{cls},{lbl[elem]}\n')
-                if conf_class > 0.001 and cls != 10:
+                if conf_class < 1.190 and cls != 10:# and lbl[elem] == cls:
                     continue
                 # if lr_s <= 1.2001:
                 #     continue
@@ -249,12 +257,14 @@ def run_net(root_dir, name=''):
                 ax1, ax2 = axes.ravel()
                 umg = img[elem].cpu().permute(1, 2, 0).numpy()
                 ax1.imshow((umg * 255).astype(np.uint8))
-                #key_to_class[10] = 'ood'
+                key_to_class[10] = 'unsure'
                 n = key_to_class[cls]
                 l = key_to_class[int(lbl[elem])]
                 # ax1.title.set_text(f'pred:  {n}\nlabel: {l}')
-                if conf_class > 10.0:
-                    ax1.set_title(f'pred: OOD\nlabel: {l}', loc='left')
+                if n == 'unsure':
+                    cls = torch.topk(lr_s.cpu(), 2)[1][-1]
+                    n = key_to_class[int(cls)]
+                    ax1.set_title(f'uncert pred: {n}\nlabel: {l}', loc='left')
                 else:
                     ax1.set_title(f'pred: {n}\nlabel: {l}', loc='left')
                 # ax2.errorbar(np.arange(9),pr,std,fmt='ok', lw=3)
@@ -384,7 +394,7 @@ def run_net(root_dir, name=''):
     plt.savefig(f'paper/acc_conf_plot.png')  # plt.show()
     lls = {k: v.fitted_param['norm'] for k, v in fits.items()}
     print(lls)
-    ap, cp, jp1, jp2, m1, m2 = [], [], [],[],[],[]
+    ap, cp, jp1, jp2, m1, m2 = [], [], [], [], [], []
     for x in range(all_lbls.shape[0]):
         m, c1, _ = pred_soft[x]
         _, c2 = pred_cert[x]
@@ -399,12 +409,14 @@ def run_net(root_dir, name=''):
         cp.append(c1)
     roc_auc_r = sklearn.metrics.roc_auc_score(np.array(ap), np.array(cp))
     fpr_r, tpr_r, thresh_r = sklearn.metrics.roc_curve(ap, cp)
-
-    show_performance_fpr(-np.array(m2), -np.array(m1))
-    v = (tpr_r > 0.95).astype(float).nonzero()[0][0]
+    m2 = np.array(m2)
+    m1 = np.array(m1)
+    show_performance_fpr(m1, m2)
+    print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
+    print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
+    v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
     print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
     print('gg')
-
 
 
 # wrong_score.mean()
