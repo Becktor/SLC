@@ -425,7 +425,7 @@ class VOSModel(nn.Module):
         out_s = torch.softmax(out_1, 1)
         #ood_dist = torch.distributions.normal.Normal(self.ood_mean, self.ood_std)
 
-        shifted_means = run_means+self.ood_mean - lse
+        shifted_means = run_means - lse
         out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)
         #s = torch.softmax(x, 1)
         output = torch.cat((x, out_j), 1)

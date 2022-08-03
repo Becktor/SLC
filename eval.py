@@ -29,6 +29,7 @@ import torchvision
 import sklearn
 from itertools import cycle
 from helper_functions.metrics import show_performance_fpr, get_measures, fpr_at_tpr, fpr_tpr
+import torchvision.datasets as dset
 
 
 class TransformWrapper(object):
@@ -61,66 +62,100 @@ idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [
 
 # train_norms = {4: (22.641314, 2.6660843), 1: (21.820875, 1.7641367), 2: (20.12747, 2.3930283), 8: (13.655789, 1.2330345), 3: (22.682724, 3.5433457), 7: (19.041382, 1.8500489), 5: (20.446945, 2.444383), 6: (18.666367, 2.6390777), 0: (14.238019, 1.7003791), 9: (19.35532, 1.5455061)}
 # train_norms = {4: (-0.20737115, 0.7276402), 1: (0.73767483, 0.46118015), 2: (-0.59243923, 0.6190916), 8: (-1.2136457, 0.52655524), 3: (-0.055931814, 0.6492376), 7: (0.2306215, 0.4722455), 5: (0.035789445, 0.54746556), 6: (0.072558165, 0.50197697), 0: (0.06483747, 0.9217627), 9: (1.0638794, 0.5808415)}
-train_norms = {3: (14.524206, 3.7952807), 8: (16.462603, 3.505013), 0: (15.083772, 3.6133106), 6: (15.876013, 3.3961341), 1: (15.926863, 2.972654), 9: (15.801685, 3.1206934), 5: (16.131227, 4.2530966), 7: (15.866643, 3.670724), 4: (15.185268, 3.2628465), 2: (14.582853, 3.30371)}
+train_norms = {6: (13.435321, 2.3584664), 9: (13.408715, 2.1854093), 4: (13.043254, 2.0857475),
+               1: (13.314321, 2.0403376), 2: (12.749729, 2.4219441), 7: (12.534626, 2.25682), 8: (13.392103, 2.3714852),
+               3: (12.783951, 2.9528656), 5: (14.202713, 3.0635521), 0: (12.440832, 2.1424139)}
 
-def run_net(root_dir, name=''):
+
+def run_net(root_dir, name='', ds='cifar', n_samp=25):
     val_dir = os.path.join(root_dir, 'val_set')
-    data = r'Q:\git\SLC\ckpts'
-    image_size = 128
-    batch_size = 32
+    data = r'C:\Users\jobe\git\SLC\ckpts'
+    image_size = 32
+    batch_size = 128
     workers = 4
     model_name = "wrn"
     torch.manual_seed(5)
-    ds = 'cifar10'
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
     norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
-    # cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
-    # gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-    # rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
-    # rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]), p=0.2)
-    # val_set = ShippingLabClassification(root_dir=val_dir,
-    #                                     transform=transforms.Compose([
-    #                                         letterbox((image_size, image_size)),
-    #                                         transforms.ToTensor(),
-    #                                         transforms.RandomHorizontalFlip(),
-    #                                         cj, gauss, rez, rez2
-    #                                     ]))
 
-    val_set = ShippingLabClassification(root_dir=val_dir,
-                                        transform=transforms.Compose([
-                                            letterbox((image_size, image_size)),
-                                            transforms.ToTensor()
-                                        ]))
+    if ds == 'ships':
+        cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
+        gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
+        rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
+        rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
+                                      p=0.2)
+        val_set = ShippingLabClassification(root_dir=val_dir,
+                                            transform=transforms.Compose([
+                                                letterbox((image_size, image_size)),
+                                                transforms.ToTensor(),
+                                                transforms.RandomHorizontalFlip(),
+                                                cj, gauss, rez, rez2
+                                            ]))
 
-    v_dataloader = DataLoader(val_set, batch_size=batch_size,
-                              shuffle=True, num_workers=workers)
-    key_to_class = {b: a for a, b in val_set.classes.items()}
+        val_set = ShippingLabClassification(root_dir=val_dir,
+                                            transform=transforms.Compose([
+                                                letterbox((image_size, image_size)),
+                                                transforms.ToTensor()
+                                            ]))
 
-    if ds == 'cifar10':
+        v_dataloader = DataLoader(val_set, batch_size=batch_size,
+                                  shuffle=True, num_workers=workers)
+        key_to_class = {b: a for a, b in val_set.classes.items()}
+
+    else:
         mean = np.array([x / 255 for x in [125.3, 123.0, 113.9]])
         std = np.array([x / 255 for x in [63.0, 62.1, 66.7]])
 
         transform_train = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.CenterCrop(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean.tolist(), std.tolist()),
         ])
 
         transform_test = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.CenterCrop(image_size),
             transforms.ToTensor(),
             transforms.Normalize(mean.tolist(), std.tolist()),
         ])
         unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
         trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                                download=True, transform=transform_train)
+                                                download=False, transform=transform_train)
         # v_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
         #                                            shuffle=True, num_workers=workers, persistent_workers=True)
 
         testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                              download=True, transform=transform_test)
+                                               download=False, transform=transform_test)
+        if ds == 'SVHN':
+            testset = torchvision.datasets.SVHN(root='./data', split='test',
+                                                download=False, transform=transform_test)
+        if ds == 'dtd':
+            # /////////////// Textures ///////////////
+            testset = dset.ImageFolder(root="./data/dtd/images",
+                                       transform=transform_test)
+        if ds == 'places365':
+            # /////////////// Places365 ///////////////
+            testset = dset.ImageFolder(root="./data/places365/",
+                                        transform=transform_test)
+        if ds == 'LSUN_resize':
+            # /////////////// LSUN-R ///////////////
+            testset = dset.ImageFolder(root="./data/LSUN_resize",
+                                        transform=transform_test)
 
-        # testset = torchvision.datasets.SVHN(root='./data', split='test',
-        #                                          download=True, transform=transform_train)
-        #testset=trainset
+        if ds == 'iSUN':
+            # /////////////// iSUN ///////////////
+            testset = dset.ImageFolder(root="./data/iSUN",
+                                        transform=transform_test)
+
+        if ds == 'LSUN_C':
+            # /////////////// LSUN-C ///////////////
+            testset = dset.ImageFolder(root="./data/LSUN_C",
+                                        transform=transform_test)
+
+        # /////////////// Mean Results ///////////////
+
+        # testset = trainset
         v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
                                                    shuffle=False, num_workers=workers, persistent_workers=True)
 
@@ -139,13 +174,13 @@ def run_net(root_dir, name=''):
     model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
 
-    # norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
-    # norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in
-    #                 enumerate(zip(model.vos_means, model.vos_stds))}
-    nms = [norms[v].mean for v in range(len(norms))]
-    stds = [norms[v].stddev for v in range(len(norms))]
+    norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
+    norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in
+                    enumerate(zip(model.vos_means, model.vos_stds))}
+    # nms = [norms[v].mean for v in range(len(norms))]
+    # stds = [norms[v].stddev for v in range(len(norms))]
     #
-    model.calibrate_means_stds(nms, stds)
+    # model.calibrate_means_stds(nms, stds)
 
     if torch.cuda.is_available():
         model.cuda()
@@ -159,21 +194,20 @@ def run_net(root_dir, name=''):
     pred_soft = []
     cls_hist = {}
     hist = []
+    oods = []
     with torch.no_grad():
         tqd_e = tqdm(enumerate(v_dataloader, 0), total=len(v_dataloader))
         fig, axes = plt.subplots(2, 1, figsize=(5, 7), gridspec_kw={'height_ratios': [3, 1]})
         for i, data in tqd_e:
-            if ds == 'cifar10':
+            if ds == 'ships':
+                t_imgs, t_lbls, _, p = data
+            else:
                 t_imgs, t_lbls = data
                 p = ''
-            else:
-                t_imgs, t_lbls, _, p = data
             t_imgs = t_imgs.cuda()
             t_lbls = t_lbls.cuda()
-            if name == 'vos':
-                obj = model.evaluate_classification(t_imgs, samples=10, std_multiplier=2)
-            else:
-                obj = model.evaluate_classification(t_imgs, samples=10, std_multiplier=2)
+
+            obj = model.evaluate_classification(t_imgs, samples=n_samp, std_multiplier=2)
 
             predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
 
@@ -198,14 +232,9 @@ def run_net(root_dir, name=''):
 
             img, lbl = show_epoch
             img = unorm(img)
-            f = open("wrong_train_c.txt", "a")
+            oods.append(obj['lse'].mean(0).cpu().numpy())
+
             for elem in range(len(obj["mean"])):
-                pr = obj["preds"][:, elem]
-                mean = obj["mean"][elem]
-                std = obj["stds"][elem].cpu().numpy()
-
-                o = obj["o"][:, elem]
-
                 if name == 'vos':
                     ood_m = obj['lse'][:, elem].mean()
                     # lr_c = #obj['lrs'][:, elem]
@@ -217,16 +246,23 @@ def run_net(root_dir, name=''):
                     conf_class = torch.tensor(0.0).cuda()
                     if cls != 10:
                         conf_class = norms_scaled[cls].cdf(ood_m)
-                        # ms = (norms[cls].mean) - obj['lse'][:, elem]
 
+                    dlrs = lr_s.detach().cpu().numpy()
+                    pred_cert.append((dlrs,
+                                      conf_class.detach().cpu().numpy()))
+
+                    if cls != 10:
+                        pred_soft.append((dlrs, dlrs[cls], lbl[elem].cpu().numpy()))
+                    else:
+                        pred_soft.append((dlrs, dlrs[cls], np.array(10)))
                     if cls in cls_hist:
                         cls_hist[cls].append(ood_m.cpu().numpy())
                     else:
                         cls_hist[cls] = [ood_m.cpu().numpy()]
                     hist.append(ood_m.cpu().numpy())
-                o = obj['o'][:, elem]
-                # torch_pred = torch.softmax(torch.concat([o, ms.unsqueeze(1)], dim=-1), dim=-1)
-                # torch_pred = torch.nn.functional.normalize(o, dim=1)#(o-o.min())/(o.max()-o.min()) #obj["preds"][:, elem]
+
+                if conf_class < 1.190:# and cls != 10:  # and lbl[elem] == cls:
+                    continue
                 torch_pred = obj['lr_soft'][:, elem]
                 pred_ent = met.predictive_entropy(torch_pred)
                 expected_ent = met.expected_entropy(torch_pred)
@@ -235,32 +271,14 @@ def run_net(root_dir, name=''):
                 var_score = torch.sqrt(met.variance_score(torch_pred))
                 mi = met.BALD(torch_pred)
                 ekl = met.expected_kl(torch_pred)
-                dlrs = lr_s.detach().cpu().numpy()
-                pred_cert.append((dlrs,
-                                  conf_class.detach().cpu().numpy()))
-                # torch.max(torch_pred, 0)[0].detach().cpu().numpy()))
-                if cls != 10:
-                    pred_soft.append((dlrs, dlrs[cls], lbl[elem].cpu().numpy()))
-                else:
-                    pred_soft.append((dlrs, dlrs[cls], np.array(10)))
 
-                # f.write(f'{p[elem]},{cls},{lbl[elem]}\n')
-                if conf_class < 1.190 and cls != 10:# and lbl[elem] == cls:
-                    continue
-                # if lr_s <= 1.2001:
-                #     continue
                 pr = torch_pred.cpu().detach().numpy()
-                # if cls==int(lbl[elem].cpu()):
-                #    continue
-                # if [elem, i] not in idx_to_check:
-                #     continue
                 ax1, ax2 = axes.ravel()
                 umg = img[elem].cpu().permute(1, 2, 0).numpy()
                 ax1.imshow((umg * 255).astype(np.uint8))
                 key_to_class[10] = 'unsure'
                 n = key_to_class[cls]
                 l = key_to_class[int(lbl[elem])]
-                # ax1.title.set_text(f'pred:  {n}\nlabel: {l}')
                 if n == 'unsure':
                     cls = torch.topk(lr_s.cpu(), 2)[1][-1]
                     n = key_to_class[int(cls)]
@@ -291,7 +309,6 @@ def run_net(root_dir, name=''):
                 plt.tight_layout()
                 plt.savefig(f'figs/{name}_{i}_{elem}.png')
                 plt.cla()
-            f.close()
         # cm = metrics.confusion_matrix(np.concatenate(total_pred), np.concatenate(total_lbl), normalize='true')
         # disp = metrics.ConfusionMatrixDisplay(confusion_matrix=cm.round(decimals=2),
         #                                       display_labels=list(key_to_class.values()))
@@ -304,96 +321,98 @@ def run_net(root_dir, name=''):
         #     label.set_rotation(45)
         #     label.set_ha('right')
         # plt.show()
-
-    vals = np.array(hist)
-    q25, q75 = np.percentile(vals, [25, 75])
-    bin_width = 2 * (q75 - q25) * len(vals) ** (-1 / 3)
-    bins = round((vals.max() - vals.min()) / bin_width)
-    # g = sns.displot(np.array(hist), bins=bins * 2, kde=True, stat="density")
-    # scale = model.vos_std.mean().cpu().numpy()
-    # mu = model.vos_mean.mean().cpu().numpy()
-    # x = np.linspace(max(0, mu - 5 * scale), mu + 5 * scale, 100)
-    # plt.plot(x, scipy.stats.norm.pdf(x, mu, scale), color='red')
-    # g.fig.subplots_adjust(top=.95)#, bottom=-0.05)
-    # g.tight_layout()
-    f = Fitter(vals, distributions=['norm'], bins=bins)
-    f.fit()
-    f.summary()
-    # 16.2, 2.39
-    plt.savefig(f'paper/kde_fit_tot.png')  # plt.show()
-    #    plt.show()
-    fits = {}
-    for (k, v) in cls_hist.items():
-        v = np.array(v)
-        if v.shape[0] == 1:
-            continue
-        q25, q75 = np.percentile(v, [25, 75])
-        bin_width = 2 * (q75 - q25) * len(v) ** (-1 / 3)
-        bins = round((v.max() - v.min()) / bin_width) * 2
-        # g = sns.displot(v, bins=bins * 3, kde=True, stat="density", height=5, label='kde')
-        # g.set(xlabel='energy', ylabel='Density', title=f'Class: {id_to_cls[k]}'))
-        x = np.linspace(min(v), max(v), 100)
-        f = Fitter(v, distributions=['norm'], bins=bins)
-        f.fit()
-        f.summary()
-        if k != 10:
-            plt.plot(x, scipy.stats.norm.pdf(x, model.vos_means[k].cpu().numpy(), model.vos_stds[k].cpu().numpy()),
-                     color='red')
-        # plot_pdf_fit_cauchy(v)
-        # plot_pdf_fit_lognorm(v)
+    all_lbls = np.concatenate(total_lbl, 0)
+    if ds == 'cifar10':
+        vals = np.array(hist)
+        q25, q75 = np.percentile(vals, [25, 75])
+        bin_width = 2 * (q75 - q25) * len(vals) ** (-1 / 3)
+        bins = round((vals.max() - vals.min()) / bin_width)
+        # g = sns.displot(np.array(hist), bins=bins * 2, kde=True, stat="density")
+        # scale = model.vos_std.mean().cpu().numpy()
+        # mu = model.vos_mean.mean().cpu().numpy()
+        # x = np.linspace(max(0, mu - 5 * scale), mu + 5 * scale, 100)
+        # plt.plot(x, scipy.stats.norm.pdf(x, mu, scale), color='red')
         # g.fig.subplots_adjust(top=.95)#, bottom=-0.05)
         # g.tight_layout()
-        fits[k] = f
-        plt.title(f'label: {k}:{key_to_class[k]}, samples: {len(v)}')
-        plt.show()
-        # plt.savefig(f'paper/kde_fit_cls_{id_to_cls[k]}.png')  # plt.show()
-    # {'norm': 0.04044779132076963, 'cauchy': 0.10192547940873295, 'lognorm': 0.04017927570199646}
-    all_lbls = np.concatenate(total_lbl, 0)
+        f = Fitter(vals, distributions=['norm'], bins=bins)
+        f.fit()
+        f.summary()
+        # 16.2, 2.39
+        plt.savefig(f'paper/kde_fit_tot.png')  # plt.show()
+        #    plt.show()
+        fits = {}
+        for (k, v) in cls_hist.items():
+            v = np.array(v)
+            if v.shape[0] == 1:
+                continue
+            q25, q75 = np.percentile(v, [25, 75])
+            bin_width = 2 * (q75 - q25) * len(v) ** (-1 / 3)
+            bins = round((v.max() - v.min()) / bin_width) * 2
+            # g = sns.displot(v, bins=bins * 3, kde=True, stat="density", height=5, label='kde')
+            # g.set(xlabel='energy', ylabel='Density', title=f'Class: {id_to_cls[k]}'))
+            x = np.linspace(min(v), max(v), 100)
+            f = Fitter(v, distributions=['norm'], bins=bins)
+            f.fit()
+            f.summary()
+            if k != 10:
+                plt.plot(x, scipy.stats.norm.pdf(x, model.vos_means[k].cpu().numpy(), model.vos_stds[k].cpu().numpy()),
+                         color='red')
+            # plot_pdf_fit_cauchy(v)
+            # plot_pdf_fit_lognorm(v)
+            # g.fig.subplots_adjust(top=.95)#, bottom=-0.05)
+            # g.tight_layout()
+            fits[k] = f
+            plt.title(f'label: {k}:{key_to_class[k]}, samples: {len(v)}')
+            plt.show()
+            # plt.savefig(f'paper/kde_fit_cls_{id_to_cls[k]}.png')  # plt.show()
+        # {'norm': 0.04044779132076963, 'cauchy': 0.10192547940873295, 'lognorm': 0.04017927570199646}
 
-    # plot roc
-    ps, gg, tlbl = zip(*pred_soft)
-    fps_s, tps_s, roc_auc_s, thresh_s = calc_tps_fps(list(zip(ps, gg)), tlbl)
-    plot_mc_roc(fps_s, tps_s, roc_auc_s, 'soft')
 
-    fps, tps, roc_auc, thresh = calc_tps_fps(pred_cert, all_lbls)
-    plot_mc_roc(fps, tps, roc_auc, 'cert')
+        # plot roc
 
-    cac = {}
-    r = 21
-    scale = 0.0125
-    for i in range(r):
-        v = i * scale
-        if v == 1:
-            v = 0.99
-        cac[i] = []
+        ps, gg, tlbl = zip(*pred_soft)
+        fps_s, tps_s, roc_auc_s, thresh_s = calc_tps_fps(list(zip(ps, gg)), tlbl)
+        plot_mc_roc(fps_s, tps_s, roc_auc_s, 'soft')
 
-        for x in range(all_lbls.shape[0]):
-            m, c1 = pred_cert[x]
-            if c1 > v:
-                if all_lbls[x] == np.argmax(m):
-                    cac[i].append(1)
-                else:
-                    cac[i].append(0)
+        fps, tps, roc_auc, thresh = calc_tps_fps(pred_cert, all_lbls)
+        plot_mc_roc(fps, tps, roc_auc, 'cert')
 
-    ls = np.array([[np.array(l).mean(), len(l)] for n, l in cac.items()])
-    x_ax = np.arange(r) * scale
-    fig = plt.figure()
-    ax = fig.add_subplot(1, 1, 1)
-    ax.plot(x_ax, 100 * (ls[:, 1] / ls[:, 1].max()), label='remaining samples')
-    ax.fill_between(x_ax, 100 * (ls[:, 1] / ls[:, 1].max()), alpha=0.5)
-    ax.plot(x_ax, 100 * ls[:, 0], color='red', label='accuracy')
-    plt.legend()
-    ax.set_ylim((75, 101))
-    ax.set_xlabel('confidence')
-    ax.set_ylabel('accuracy/remaining samples')
-    import matplotlib.ticker as mtick
-    ax.yaxis.set_major_formatter(mtick.PercentFormatter())
-    # plt.xlim((0.00, 0.11))
-    ax.set_title("Accuracy vs. confidence of samples")
-    plt.subplots_adjust(right=0.95)
-    plt.savefig(f'paper/acc_conf_plot.png')  # plt.show()
-    lls = {k: v.fitted_param['norm'] for k, v in fits.items()}
-    print(lls)
+        cac = {}
+        r = 21
+        scale = 0.0125
+        for i in range(r):
+            v = i * scale
+            if v == 1:
+                v = 0.99
+            cac[i] = []
+
+            for x in range(all_lbls.shape[0]):
+                m, c1 = pred_cert[x]
+                if c1 > v:
+                    if all_lbls[x] == np.argmax(m):
+                        cac[i].append(1)
+                    else:
+                        cac[i].append(0)
+
+        ls = np.array([[np.array(l).mean(), len(l)] for n, l in cac.items()])
+        x_ax = np.arange(r) * scale
+        fig = plt.figure()
+        ax = fig.add_subplot(1, 1, 1)
+        ax.plot(x_ax, 100 * (ls[:, 1] / ls[:, 1].max()), label='remaining samples')
+        ax.fill_between(x_ax, 100 * (ls[:, 1] / ls[:, 1].max()), alpha=0.5)
+        ax.plot(x_ax, 100 * ls[:, 0], color='red', label='accuracy')
+        plt.legend()
+        ax.set_ylim((75, 101))
+        ax.set_xlabel('confidence')
+        ax.set_ylabel('accuracy/remaining samples')
+        import matplotlib.ticker as mtick
+        ax.yaxis.set_major_formatter(mtick.PercentFormatter())
+        # plt.xlim((0.00, 0.11))
+        ax.set_title("Accuracy vs. confidence of samples")
+        plt.subplots_adjust(right=0.95)
+        plt.savefig(f'paper/acc_conf_plot.png')  # plt.show()
+        lls = {k: v.fitted_param['norm'] for k, v in fits.items()}
+        print(lls)
     ap, cp, jp1, jp2, m1, m2 = [], [], [], [], [], []
     for x in range(all_lbls.shape[0]):
         m, c1, _ = pred_soft[x]
@@ -406,17 +425,19 @@ def run_net(root_dir, name=''):
             ap.append(0)
             m2.append(c1)
             jp2.append(c2)
-        cp.append(c1)
+        cp.append(c2)
     roc_auc_r = sklearn.metrics.roc_auc_score(np.array(ap), np.array(cp))
     fpr_r, tpr_r, thresh_r = sklearn.metrics.roc_curve(ap, cp)
     m2 = np.array(m2)
     m1 = np.array(m1)
-    show_performance_fpr(m1, m2)
-    print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
-    print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
-    v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
-    print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
-    print('gg')
+    if ds == "cifar10":
+        show_performance_fpr(m1, m2)
+        print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
+        print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
+        v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
+        print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
+        print('gg')
+    return np.concatenate(oods, 0), np.array(cp)
 
 
 # wrong_score.mean()
@@ -581,5 +602,27 @@ def draw_ftpr(i, elem, elem_s):
 
 if __name__ == "__main__":
     path = r'Q:\uncert_data\data_cifar_cleaned'
-    for x in ['vos']:  # , 'dropout']:
-        run_net(path, name=x)
+    cps = []
+    test = ["LSUN_C", 'SVHN', 'dtd', "places365", "iSUN", "LSUN_resize"]
+    try:
+        iid1 = np.fromfile("iid1", dtype=np.float32)
+        iid2 = np.fromfile("iid2", dtype=np.float32)
+    except FileNotFoundError:
+        iid1, iid2 = run_net(path, name='vos', ds='cifar10')
+        iid1.tofile("iid1")
+        iid2.tofile("iid2")
+    vos, gss = [], []
+    for dataset in test:
+        ood1, ood2 = run_net(path, name='vos', ds=dataset)
+        vos.append(fpr_tpr(iid1, ood1))
+        gss.append(fpr_tpr(iid2, ood2))
+        print(f'dsvos: {vos[-1]}')
+        print(f'gauss: {gss[-1]}')
+
+    for x in range(len(vos)):
+        print(f"-----{test[x]}-----")
+        print(f'dsvos: {vos[x]}')
+        print(f'gauss: {gss[x]}')
+    print(f'mean ds vos: {np.array(vos).mean()}')
+    print(f'mean ds gss: {np.array(gss).mean()}')
+    print('done')

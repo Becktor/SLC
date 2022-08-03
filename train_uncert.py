@@ -143,7 +143,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
-            select = 1
+            select = 2
             data_dict = torch.zeros(n_classes, sample_number, 128).cuda()
             for i in range(n_classes):
                 number_dict[i] = 0

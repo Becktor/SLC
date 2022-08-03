@@ -54,14 +54,16 @@ def vos_update(model, vos_dict):
             else:
                 ood_samples = torch.cat((ood_samples, negative_samples[index_prob]), 0)
 
+            #ood_samples = torch.cat((ood_samples,  GroupSort(2, 0)(negative_samples[index_prob])), 0)
+
         if len(ood_samples) != 0:
             # add some gaussian noise
-            gs_smp1 = GroupSort(2, 0)(ood_samples)
+            #gs_smp1 = GroupSort(2, 0)(ood_samples)
             #gs_smp2 = GroupSort(5, 0)(ood_samples)
             predictions_iid = vos_dict['pred']
             energy_score_for_fg = model.log_sum_exp(predictions_iid, 1)
 
-            ood_samples = torch.cat((ood_samples, gs_smp1), 0)#, gs_smp2), 0) #
+            #ood_samples = torch.cat((ood_samples, gs_smp1), 0)#, gs_smp2), 0) #
             #ood_samples = GroupSort(2, 0)(vos_dict["output"])
             predictions_ood = model.fc(ood_samples)
             energy_score_for_bg = model.log_sum_exp(predictions_ood, 1)
@@ -97,7 +99,7 @@ def vos_update(model, vos_dict):
             #out_2 = (1 - run_norms.cdf(input_for_lr))*2 - 1
             #out_2 = torch.nn.LeakyReLU()(out_2)
             out_s = torch.softmax(out_1, 1)
-            shifted_means = run_means + model.ood_mean - input_for_lr
+            shifted_means = run_means - input_for_lr
             out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)#(run_means * out_2).unsqueeze(1)#(torch.pow(run_means + run_stds, 2) / torch.pow(input_for_lr, 2)).unsqueeze(1)
             #out_j = torch.nn.Tanh()(out_j).unsqueeze(1)
             #s = torch.softmax(input_for_lr_2, 1)
@@ -162,6 +164,7 @@ def vos_update(model, vos_dict):
                 vos_dict['data_dict'][dict_key][vos_dict['number_dict'][dict_key]] = vos_dict['output'][index].detach()
                 vos_dict['number_dict'][dict_key] += 1
     return lr_reg_loss, xe_outlier, gauss_nll_loss
+
 
 def hist_train_samples(model):
     import matplotlib.pyplot as plt
