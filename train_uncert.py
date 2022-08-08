@@ -31,7 +31,7 @@ from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
     try:
         ds = 'cifar10'
         torch.cuda.empty_cache()
@@ -143,7 +143,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
-            select = 2
+            select = 1
             data_dict = torch.zeros(n_classes, sample_number, 128).cuda()
             for i in range(n_classes):
                 number_dict[i] = 0
@@ -200,8 +200,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                     kl_b = kl_b * 0.1
                     loss = model.loss(pred, lbls)
                     cost = vos_loss + kl_f + kl_b
-                    if cost == 0:
-                        cost += loss
+                    #if cost == 0:
+                    cost += loss
 
                 else:
                     # with torch.cuda.amp.autocast():

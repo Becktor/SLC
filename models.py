@@ -14,7 +14,7 @@ import numpy as np
 from helper_functions.loss import FocalLoss
 from functools import partial
 from mobileNetV3 import MobileNetV3
-from wrn import WideResNet
+from wrn import WideResNet, SuperDropout
 
 
 def eval_samples(model, x, samples=10, std_multiplier=2):
@@ -125,19 +125,6 @@ class TTAModel(nn.Module):
         softmax_lower = means - (std_multiplier * stds)
         return {'mean': means, 'stds': stds, 'sp': means, 'sp_u': softmax_upper, 'sp_l': softmax_lower,
                 'preds': soft_stack}
-
-
-class SuperDropout(nn.Module):
-    def __init__(self, p=0.5, pt=0.10):
-        super().__init__()
-        self.p = p
-        self.pt = pt
-
-    def forward(self, x):
-        if self.training:
-            return F.dropout(x, p=self.p, training=True)
-        else:
-            return F.dropout(x, p=self.pt, training=True)
 
 
 class DropoutModel(nn.Module):
@@ -307,33 +294,26 @@ class VOSModel(nn.Module):
             # norm_layer=partial(nn.BatchNorm2d, momentum=0.1))
             # self.model = torch.nn.Sequential(*list(resnet.children())[:-1])
         elif 'wrn' in model_name:
-            self.model = WideResNet(40, n_classes, 2, dropRate=drop_rate)
+            self.model = WideResNet(40, n_classes, 2, drop_rate=drop_rate)
             in_channels = 128
             out_channels = 128
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            # SuperDropout(drop_rate),
-            # .Conv2d(in_channels=960, out_channels=1280, kernel_size=1, stride=1,
-            #          padding=0, bias=False),
+        self.mcmc_layer = nn.Sequential(
             SuperDropout(drop_rate),
-            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1,
-                      padding=0, bias=False),
+            torch.nn.Linear(in_channels, out_channels, bias=False),
             nn.ReLU(inplace=True),
             SuperDropout(drop_rate),
         )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
+        #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         self.fc = torch.nn.Linear(vos_multivariate_dim, n_classes)
         self.weight_energy = torch.nn.Linear(n_classes, 1)
         torch.nn.init.uniform_(self.weight_energy.weight)
 
         self.logistic_regression = torch.nn.Linear(1, 2)
-        self.logistic_regression2 = torch.nn.Linear(n_classes + 1, n_classes + 1)
-        self.logistic_regression3 = torch.nn.Linear(128, n_classes + 1)
-        #self.logistic_regression4 = torch.nn.Linear(n_classes + 1, n_classes + 1)
 
         self.running_means = []
         self.running_vars = []
@@ -348,7 +328,7 @@ class VOSModel(nn.Module):
         self.vos_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
         # self.idd_mean = torch.tensor(15.0)
         # self.idd_std = torch.tensor(1.0)
-        self.running_ood_samples = torch.zeros(500)
+        self.running_ood_samples = torch.zeros(500 * n_classes).cuda()
         self.ood_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.ood_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
@@ -396,7 +376,7 @@ class VOSModel(nn.Module):
 
         value.exp().sum(dim, keepdim).log()
         """
-        return torch.logsumexp(value, dim=dim)
+        #return torch.logsumexp(value, dim=dim)
         if dim is not None:
             m, _ = torch.max(value, dim=dim, keepdim=True)
             value0 = value - m
@@ -411,42 +391,26 @@ class VOSModel(nn.Module):
 
     def ood_pred(self, x):
         lse = self.log_sum_exp(x, dim=1)
-        # out_1 = torch.nn.LeakyReLU(inplace=True)(lse.unsqueeze(1))
-        out_1 = self.logistic_regression(lse.unsqueeze(1))
         pred = torch.argmax(x, 1)
         run_means = [self.vos_means[t] for t in pred]
         run_means = torch.stack(run_means)
         run_stds = [self.vos_stds[t] for t in pred]
         run_stds = torch.stack(run_stds)
-        #run_norms = torch.distributions.normal.Normal(run_means, run_stds)
-        #out_2 = (1-run_norms.cdf(lse)) * 2 - 1
-        # out_2 = torch.nn.LeakyReLU()(out_2)
-        #out_j = (run_means * out_2) #(torch.pow(run_means+run_stds, 2) / torch.pow(lse, 2))
-        out_s = torch.softmax(out_1, 1)
-        #ood_dist = torch.distributions.normal.Normal(self.ood_mean, self.ood_std)
-
-        shifted_means = run_means - lse
-        out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)
-        #s = torch.softmax(x, 1)
+        clamped_inp = torch.clamp(lse, min=.001)
+        shifted_means = torch.clamp(run_means - run_stds, min=0) * (torch.log(run_means/clamped_inp))
+        out_j = shifted_means.unsqueeze(1)
         output = torch.cat((x, out_j), 1)
-        # #output = (run_means - run_stds).unsqueeze(1) - x
-        # output = torch.nn.LeakyReLU(inplace=True)(output)
-        #residual = self.logistic_regression2(output)
-        # output2 = torch.nn.LeakyReLU(inplace=True)(output2)
-        # residual = self.logistic_regression3(output2)
-        #residual = torch.nn.LeakyReLU(inplace=True)(residual)
-        #output3 = residual + torch.cat((x, torch.zeros_like(run_means).unsqueeze(1).cuda()), 1)
         return output
 
     def forward_step(self, inp):
+        #pred, output = self.model.forward_virtual(inp)
         x = self.model.get_features(inp)
         x = self.global_pool(x)
-        x = self.classifier(x)
         x = x.view(x.size(0), -1)
-        x = self.to_multivariate_variables(x)
-        output = nn.ReLU(inplace=True)(x)
+        output = self.mcmc_layer(x)
+        #x = self.to_multivariate_variables(x)
+        #output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
-        # pred = nn.ReLU(inplace=True)(pred)
         return pred, output
 
     def update_lse(self, pred, target):

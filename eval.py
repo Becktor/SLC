@@ -62,14 +62,12 @@ idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [
 
 # train_norms = {4: (22.641314, 2.6660843), 1: (21.820875, 1.7641367), 2: (20.12747, 2.3930283), 8: (13.655789, 1.2330345), 3: (22.682724, 3.5433457), 7: (19.041382, 1.8500489), 5: (20.446945, 2.444383), 6: (18.666367, 2.6390777), 0: (14.238019, 1.7003791), 9: (19.35532, 1.5455061)}
 # train_norms = {4: (-0.20737115, 0.7276402), 1: (0.73767483, 0.46118015), 2: (-0.59243923, 0.6190916), 8: (-1.2136457, 0.52655524), 3: (-0.055931814, 0.6492376), 7: (0.2306215, 0.4722455), 5: (0.035789445, 0.54746556), 6: (0.072558165, 0.50197697), 0: (0.06483747, 0.9217627), 9: (1.0638794, 0.5808415)}
-train_norms = {6: (13.435321, 2.3584664), 9: (13.408715, 2.1854093), 4: (13.043254, 2.0857475),
-               1: (13.314321, 2.0403376), 2: (12.749729, 2.4219441), 7: (12.534626, 2.25682), 8: (13.392103, 2.3714852),
-               3: (12.783951, 2.9528656), 5: (14.202713, 3.0635521), 0: (12.440832, 2.1424139)}
+train_norms = {3: (14.008406, 3.8698266), 8: (16.991377, 3.6263654), 0: (15.370032, 3.7869778), 6: (15.591267, 3.399394), 1: (16.760761, 2.9231396), 9: (16.355757, 3.545238), 5: (16.184753, 4.906386), 7: (15.685531, 3.6368687), 4: (15.913696, 3.8837087), 2: (15.373063, 4.195742)}
 
 
-def run_net(root_dir, name='', ds='cifar', n_samp=25):
+def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
     val_dir = os.path.join(root_dir, 'val_set')
-    data = r'C:\Users\jobe\git\SLC\ckpts'
+    data = r'Q:\git\SLC\ckpts'
     image_size = 32
     batch_size = 128
     workers = 4
@@ -195,6 +193,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
     cls_hist = {}
     hist = []
     oods = []
+    gss_oods = []
     with torch.no_grad():
         tqd_e = tqdm(enumerate(v_dataloader, 0), total=len(v_dataloader))
         fig, axes = plt.subplots(2, 1, figsize=(5, 7), gridspec_kw={'height_ratios': [3, 1]})
@@ -204,6 +203,8 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
             else:
                 t_imgs, t_lbls = data
                 p = ''
+            # if len(oods) >= max_iter:
+            #     return oods, gss_oods
             t_imgs = t_imgs.cuda()
             t_lbls = t_lbls.cuda()
 
@@ -232,8 +233,8 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
 
             img, lbl = show_epoch
             img = unorm(img)
-            oods.append(obj['lse'].mean(0).cpu().numpy())
-
+            oods.append((obj['lse_m']).cpu().numpy())
+            key_to_class[10] = 'unsure'
             for elem in range(len(obj["mean"])):
                 if name == 'vos':
                     ood_m = obj['lse'][:, elem].mean()
@@ -246,7 +247,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
                     conf_class = torch.tensor(0.0).cuda()
                     if cls != 10:
                         conf_class = norms_scaled[cls].cdf(ood_m)
-
+                    gss_oods.append(conf_class.cpu().numpy())
                     dlrs = lr_s.detach().cpu().numpy()
                     pred_cert.append((dlrs,
                                       conf_class.detach().cpu().numpy()))
@@ -431,13 +432,14 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
     m2 = np.array(m2)
     m1 = np.array(m1)
     if ds == "cifar10":
+        print(f'accuracy: {accuracy:.4f}')
         show_performance_fpr(m1, m2)
         print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
         print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
         v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
         print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
-        print('gg')
-    return np.concatenate(oods, 0), np.array(cp)
+
+    return np.concatenate(oods, 0), np.array(gss_oods)
 
 
 # wrong_score.mean()
@@ -603,14 +605,15 @@ def draw_ftpr(i, elem, elem_s):
 if __name__ == "__main__":
     path = r'Q:\uncert_data\data_cifar_cleaned'
     cps = []
-    test = ["LSUN_C", 'SVHN', 'dtd', "places365", "iSUN", "LSUN_resize"]
-    try:
-        iid1 = np.fromfile("iid1", dtype=np.float32)
-        iid2 = np.fromfile("iid2", dtype=np.float32)
-    except FileNotFoundError:
-        iid1, iid2 = run_net(path, name='vos', ds='cifar10')
-        iid1.tofile("iid1")
-        iid2.tofile("iid2")
+    test = ["LSUN_C", 'SVHN', 'dtd', "iSUN", "LSUN_resize","places365"]
+    #test = ["iSUN", "LSUN_resize"]
+    # try:
+    #     iid1 = np.fromfile("iid1", dtype=np.float32)
+    #     iid2 = np.fromfile("iid2", dtype=np.float32)
+    # except FileNotFoundError:
+    iid1, iid2 = run_net(path, name='vos', ds='cifar10', max_iter=10000)
+    iid1.tofile("iid1")
+    iid2.tofile("iid2")
     vos, gss = [], []
     for dataset in test:
         ood1, ood2 = run_net(path, name='vos', ds=dataset)
@@ -618,6 +621,7 @@ if __name__ == "__main__":
         gss.append(fpr_tpr(iid2, ood2))
         print(f'dsvos: {vos[-1]}')
         print(f'gauss: {gss[-1]}')
+        print(f'mean: {ood1.mean()}')
 
     for x in range(len(vos)):
         print(f"-----{test[x]}-----")
