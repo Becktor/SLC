@@ -62,47 +62,52 @@ idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [
 
 # train_norms = {4: (22.641314, 2.6660843), 1: (21.820875, 1.7641367), 2: (20.12747, 2.3930283), 8: (13.655789, 1.2330345), 3: (22.682724, 3.5433457), 7: (19.041382, 1.8500489), 5: (20.446945, 2.444383), 6: (18.666367, 2.6390777), 0: (14.238019, 1.7003791), 9: (19.35532, 1.5455061)}
 # train_norms = {4: (-0.20737115, 0.7276402), 1: (0.73767483, 0.46118015), 2: (-0.59243923, 0.6190916), 8: (-1.2136457, 0.52655524), 3: (-0.055931814, 0.6492376), 7: (0.2306215, 0.4722455), 5: (0.035789445, 0.54746556), 6: (0.072558165, 0.50197697), 0: (0.06483747, 0.9217627), 9: (1.0638794, 0.5808415)}
-train_norms = {6: (13.435321, 2.3584664), 9: (13.408715, 2.1854093), 4: (13.043254, 2.0857475),
-               1: (13.314321, 2.0403376), 2: (12.749729, 2.4219441), 7: (12.534626, 2.25682), 8: (13.392103, 2.3714852),
-               3: (12.783951, 2.9528656), 5: (14.202713, 3.0635521), 0: (12.440832, 2.1424139)}
+train_norms = {3: (37.14676, 6.9668365), 8: (49.920303, 8.080076), 0: (44.855286, 8.376852), 6: (51.77699, 10.192503),
+               1: (55.9616, 7.710187), 9: (55.847435, 10.229197), 5: (45.807922, 9.932051), 7: (50.364372, 9.612955),
+               4: (44.131462, 7.785312), 2: (44.413277, 8.9750395)}
 
 
-def run_net(root_dir, name='', ds='cifar', n_samp=25):
+def run_net(root_dir, name='', ds='cifar', n_samp=10, ds_cmp='cifar'):
     val_dir = os.path.join(root_dir, 'val_set')
     data = r'C:\Users\jobe\git\SLC\ckpts'
-    image_size = 32
+
     batch_size = 128
     workers = 4
     model_name = "wrn"
     torch.manual_seed(5)
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
-    norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
-
+    unorm = None
     if ds == 'ships':
-        cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
-        gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-        rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
-        rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
-                                      p=0.2)
+        image_size = 64
+        mean = np.array([x / 255 for x in [115.8, 115.0, 116.0]])
+        std = np.array([x / 255 for x in [52.2, 51.0, 55.6]])
+        # cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
+        # gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
+        # rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
+        # rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
+        #                               p=0.2)
+        # val_set = ShippingLabClassification(root_dir=val_dir,
+        #                                     transform=transforms.Compose([
+        #                                         letterbox((image_size, image_size)),
+        #                                         transforms.ToTensor(),
+        #                                         transforms.RandomHorizontalFlip(),
+        #                                         cj, gauss, rez, rez2
+        #                                     ]))
+        unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
         val_set = ShippingLabClassification(root_dir=val_dir,
                                             transform=transforms.Compose([
-                                                letterbox((image_size, image_size)),
                                                 transforms.ToTensor(),
-                                                transforms.RandomHorizontalFlip(),
-                                                cj, gauss, rez, rez2
+                                                transforms.Normalize(mean.tolist(), std.tolist()),
+                                                letterbox((image_size, image_size), color=mean, unorm=unorm)
                                             ]))
 
-        val_set = ShippingLabClassification(root_dir=val_dir,
-                                            transform=transforms.Compose([
-                                                letterbox((image_size, image_size)),
-                                                transforms.ToTensor()
-                                            ]))
 
         v_dataloader = DataLoader(val_set, batch_size=batch_size,
                                   shuffle=True, num_workers=workers)
-        key_to_class = {b: a for a, b in val_set.classes.items()}
+        # key_to_class = {b: a for a, b in val_set.classes.items()}
 
     else:
+        image_size = 32
         mean = np.array([x / 255 for x in [125.3, 123.0, 113.9]])
         std = np.array([x / 255 for x in [63.0, 62.1, 66.7]])
 
@@ -127,6 +132,31 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
 
         testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                                download=False, transform=transform_test)
+
+    if ds != 'ships' and ds != 'cifar':
+        transform_test = None
+        if ds_cmp == 'ships':
+            image_size = 64
+            mean = np.array([x / 255 for x in [115.8, 115.0, 116.0]])
+            std = np.array([x / 255 for x in [52.2, 51.0, 55.6]])
+            transform_test = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean.tolist(), std.tolist()),
+                letterbox((image_size, image_size), color=mean)])
+            unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
+
+        if ds_cmp == 'cifar':
+            image_size = 32
+            mean = np.array([x / 255 for x in [125.3, 123.0, 113.9]])
+            std = np.array([x / 255 for x in [63.0, 62.1, 66.7]])
+            transform_test = transforms.Compose([
+                transforms.Resize((image_size, image_size)),
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(),
+                transforms.Normalize(mean.tolist(), std.tolist()),
+            ])
+            unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
+
         if ds == 'SVHN':
             testset = torchvision.datasets.SVHN(root='./data', split='test',
                                                 download=False, transform=transform_test)
@@ -137,31 +167,34 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
         if ds == 'places365':
             # /////////////// Places365 ///////////////
             testset = dset.ImageFolder(root="./data/places365/",
-                                        transform=transform_test)
+                                       transform=transform_test)
         if ds == 'LSUN_resize':
             # /////////////// LSUN-R ///////////////
             testset = dset.ImageFolder(root="./data/LSUN_resize",
-                                        transform=transform_test)
+                                       transform=transform_test)
 
         if ds == 'iSUN':
             # /////////////// iSUN ///////////////
             testset = dset.ImageFolder(root="./data/iSUN",
-                                        transform=transform_test)
+                                       transform=transform_test)
 
         if ds == 'LSUN_C':
             # /////////////// LSUN-C ///////////////
             testset = dset.ImageFolder(root="./data/LSUN_C",
-                                        transform=transform_test)
+                                       transform=transform_test)
 
         # /////////////// Mean Results ///////////////
 
         # testset = trainset
         v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                                   shuffle=False, num_workers=workers, persistent_workers=True)
+                                                   shuffle=True, num_workers=workers, persistent_workers=True)
 
-        key_to_class = {k: v for k, v in enumerate(trainset.classes)}
+    path = os.path.join(data, model_name + "_" + name + "_100.pt")
+    model_dict = torch.load(os.path.join(root_dir, path))
+    key_to_class = model_dict['classes']
 
     n_classes = len(key_to_class.keys())
+    model = None
     if name == 'bayes':
         model = BayesVGG16(n_classes=n_classes)
     elif name == 'dropout':
@@ -169,14 +202,10 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
     elif name == 'vos':
         model = VOSModel(n_classes=n_classes, model_name=model_name)
 
-    path = os.path.join(data, model_name + "_" + name + "_100.pt")
-
-    model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
 
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
-    norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in
-                    enumerate(zip(model.vos_means, model.vos_stds))}
+
     # nms = [norms[v].mean for v in range(len(norms))]
     # stds = [norms[v].stddev for v in range(len(norms))]
     #
@@ -195,6 +224,8 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
     cls_hist = {}
     hist = []
     oods = []
+    imgs = []
+    key_to_class[n_classes] = 'unsure'
     with torch.no_grad():
         tqd_e = tqdm(enumerate(v_dataloader, 0), total=len(v_dataloader))
         fig, axes = plt.subplots(2, 1, figsize=(5, 7), gridspec_kw={'height_ratios': [3, 1]})
@@ -231,9 +262,10 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
             show_epoch = (t_imgs, t_lbls)
 
             img, lbl = show_epoch
-            img = unorm(img)
+            if ds != 'ships':
+                img = unorm(img)
             oods.append(obj['lse'].mean(0).cpu().numpy())
-
+            imgs.append(img.cpu())
             for elem in range(len(obj["mean"])):
                 if name == 'vos':
                     ood_m = obj['lse'][:, elem].mean()
@@ -244,24 +276,24 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
                     cls = np.argmax(lr_s.cpu().numpy())
                     # cls2 = np.argmax(lr_s2.detach().cpu().numpy())
                     conf_class = torch.tensor(0.0).cuda()
-                    if cls != 10:
-                        conf_class = norms_scaled[cls].cdf(ood_m)
+                    if cls != n_classes:
+                        conf_class = norms[cls].cdf(ood_m)
 
                     dlrs = lr_s.detach().cpu().numpy()
                     pred_cert.append((dlrs,
                                       conf_class.detach().cpu().numpy()))
 
-                    if cls != 10:
+                    if cls != n_classes:
                         pred_soft.append((dlrs, dlrs[cls], lbl[elem].cpu().numpy()))
                     else:
-                        pred_soft.append((dlrs, dlrs[cls], np.array(10)))
+                        pred_soft.append((dlrs, dlrs[cls], np.array(n_classes)))
                     if cls in cls_hist:
                         cls_hist[cls].append(ood_m.cpu().numpy())
                     else:
                         cls_hist[cls] = [ood_m.cpu().numpy()]
                     hist.append(ood_m.cpu().numpy())
 
-                if conf_class < 1.190:# and cls != 10:  # and lbl[elem] == cls:
+                if conf_class > -.01 and cls != 11:  # and lbl[elem] == cls:
                     continue
                 torch_pred = obj['lr_soft'][:, elem]
                 pred_ent = met.predictive_entropy(torch_pred)
@@ -276,7 +308,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
                 ax1, ax2 = axes.ravel()
                 umg = img[elem].cpu().permute(1, 2, 0).numpy()
                 ax1.imshow((umg * 255).astype(np.uint8))
-                key_to_class[10] = 'unsure'
+
                 n = key_to_class[cls]
                 l = key_to_class[int(lbl[elem])]
                 if n == 'unsure':
@@ -322,7 +354,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
         #     label.set_ha('right')
         # plt.show()
     all_lbls = np.concatenate(total_lbl, 0)
-    if ds == 'cifar10':
+    if ds == 'cifar10' or ds == "ships":
         vals = np.array(hist)
         q25, q75 = np.percentile(vals, [25, 75])
         bin_width = 2 * (q75 - q25) * len(vals) ** (-1 / 3)
@@ -354,7 +386,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
             f = Fitter(v, distributions=['norm'], bins=bins)
             f.fit()
             f.summary()
-            if k != 10:
+            if k != n_classes:
                 plt.plot(x, scipy.stats.norm.pdf(x, model.vos_means[k].cpu().numpy(), model.vos_stds[k].cpu().numpy()),
                          color='red')
             # plot_pdf_fit_cauchy(v)
@@ -366,7 +398,6 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
             plt.show()
             # plt.savefig(f'paper/kde_fit_cls_{id_to_cls[k]}.png')  # plt.show()
         # {'norm': 0.04044779132076963, 'cauchy': 0.10192547940873295, 'lognorm': 0.04017927570199646}
-
 
         # plot roc
 
@@ -425,18 +456,18 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25):
             ap.append(0)
             m2.append(c1)
             jp2.append(c2)
-        cp.append(c2)
+        cp.append(c1)
     roc_auc_r = sklearn.metrics.roc_auc_score(np.array(ap), np.array(cp))
     fpr_r, tpr_r, thresh_r = sklearn.metrics.roc_curve(ap, cp)
     m2 = np.array(m2)
     m1 = np.array(m1)
-    if ds == "cifar10":
+    if ds == "cifar10" or ds == "ships":
+        print(f'acc: {accuracy:.4f}')
         show_performance_fpr(m1, m2)
         print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
         print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
         v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
         print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
-        print('gg')
     return np.concatenate(oods, 0), np.array(cp)
 
 
@@ -601,16 +632,16 @@ def draw_ftpr(i, elem, elem_s):
 
 
 if __name__ == "__main__":
-    path = r'Q:\uncert_data\data_cifar_cleaned'
+    path = r'C:\Users\jobe\git\SLC\data\ships'
     cps = []
     test = ["LSUN_C", 'SVHN', 'dtd', "places365", "iSUN", "LSUN_resize"]
-    try:
-        iid1 = np.fromfile("iid1", dtype=np.float32)
-        iid2 = np.fromfile("iid2", dtype=np.float32)
-    except FileNotFoundError:
-        iid1, iid2 = run_net(path, name='vos', ds='cifar10')
-        iid1.tofile("iid1")
-        iid2.tofile("iid2")
+    # try:
+    #     iid1 = np.fromfile("iid1", dtype=np.float32)
+    #     iid2 = np.fromfile("iid2", dtype=np.float32)
+    # except FileNotFoundError:
+    iid1, iid2 = run_net(path, name='vos', ds='ships', ds_cmp='ships')
+    iid1.tofile("iid1")
+    iid2.tofile("iid2")
     vos, gss = [], []
     for dataset in test:
         ood1, ood2 = run_net(path, name='vos', ds=dataset)

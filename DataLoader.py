@@ -301,43 +301,46 @@ class PennFudanDataset(torch.utils.data.Dataset):
 #         return self.classes
 
 class letterbox:
-    def __init__(self,  new_shape=(128, 128), color=(114, 114, 114), auto=False, scaleFill=False, scaleup=True, stride=32):
+    def __init__(self,  new_shape=(128, 128), color=(114, 114, 114), auto=False,
+                 scaleFill=False, scaleup=True, stride=32, unorm=None, debug=False):
         self.new_shape = new_shape
         self.color = color
-        self.auto = auto
-        self.scaleFill = scaleFill
-        self.scaleup = scaleup
         self.stride = stride
+        self.unorm = unorm
+        self.debug = debug
 
-    def __call__(self, img):
-        img = np.array(img)
+    def __call__(self, input_img):
+        img = input_img#np.array(input_img)
         # Resize and pad image while meeting stride-multiple constraints
-        shape = img.shape[:2]  # current shape [height, width]
+        shape = img.shape[1:]  # current shape [height, width]
         if isinstance(self.new_shape, int):
             self.new_shape = (self.new_shape, self.new_shape)
 
         # Scale ratio (new / old)
         r = min(self.new_shape[0] / shape[0], self.new_shape[1] / shape[1])
-        if not self.scaleup:  # only scale down, do not scale up (for better val mAP)
-            r = min(r, 1.0)
+        #if not self.scaleup:  # only scale down, do not scale up (for better val mAP)
+        r = min(r, 1.0)
 
         # Compute padding
-        ratio = r, r  # width, height ratios
-        new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
-        dw, dh = self.new_shape[1] - new_unpad[0], self.new_shape[0] - new_unpad[1]  # wh padding
-        if self.auto:  # minimum rectangle
-            dw, dh = np.mod(dw, self.stride), np.mod(dh, self.stride)  # wh padding
-        elif self.scaleFill:  # stretch
-            dw, dh = 0.0, 0.0
-            new_unpad = (self.new_shape[1], self.new_shape[0])
-            ratio = self.new_shape[1] / shape[1], self.new_shape[0] / shape[0]  # width, height ratios
+        new_unpad = int(round(shape[0] * r)), int(round(shape[1] * r))
+        dh, dw = self.new_shape[1] - new_unpad[0], self.new_shape[0] - new_unpad[1]  # wh padding
 
-        dw /= 2  # divide padding into 2 sides
         dh /= 2
+        dw /= 2  # divide padding into 2 sides
 
         if shape[::-1] != new_unpad:  # resize
-            img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+            img = transforms.Resize(new_unpad)(img)
+            #img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
         top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
         left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
-        img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.color)  # add border
+        pad = transforms.Pad((left, top, right, bottom), fill=self.color.mean())
+        img = pad(img)
+        if img.shape[1] != img.shape[2]:
+            print('error')
+        if self.debug:
+            import matplotlib.pyplot as plt
+            uimg = self.unorm(img)
+            plt.imshow(uimg.permute([1, 2, 0]).numpy())
+            plt.show()
+        #img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=self.color)  # add border
         return img

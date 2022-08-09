@@ -303,9 +303,6 @@ class VOSModel(nn.Module):
             self.model = MobileNetV3("small", classes_num=n_classes, input_size=32)
             in_channels = 576
             out_channels = 1024
-            # resnet = mobilenetv3.mobilenet_v3_small(pretrained=True,
-            # norm_layer=partial(nn.BatchNorm2d, momentum=0.1))
-            # self.model = torch.nn.Sequential(*list(resnet.children())[:-1])
         elif 'wrn' in model_name:
             self.model = WideResNet(40, n_classes, 2, dropRate=drop_rate)
             in_channels = 128
@@ -313,13 +310,9 @@ class VOSModel(nn.Module):
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            # SuperDropout(drop_rate),
-            # .Conv2d(in_channels=960, out_channels=1280, kernel_size=1, stride=1,
-            #          padding=0, bias=False),
+        self.mcmc_layer = nn.Sequential(
             SuperDropout(drop_rate),
-            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1,
-                      padding=0, bias=False),
+            nn.Linear(in_channels, out_channels, bias=False),
             nn.ReLU(inplace=True),
             SuperDropout(drop_rate),
         )
@@ -331,9 +324,6 @@ class VOSModel(nn.Module):
         torch.nn.init.uniform_(self.weight_energy.weight)
 
         self.logistic_regression = torch.nn.Linear(1, 2)
-        self.logistic_regression2 = torch.nn.Linear(n_classes + 1, n_classes + 1)
-        self.logistic_regression3 = torch.nn.Linear(128, n_classes + 1)
-        #self.logistic_regression4 = torch.nn.Linear(n_classes + 1, n_classes + 1)
 
         self.running_means = []
         self.running_vars = []
@@ -346,9 +336,7 @@ class VOSModel(nn.Module):
         self.vos_stds = nn.Parameter(torch.ones([n_classes, ]), requires_grad=False)
         self.vos_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.vos_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
-        # self.idd_mean = torch.tensor(15.0)
-        # self.idd_std = torch.tensor(1.0)
-        self.running_ood_samples = torch.zeros(500)
+        self.running_ood_samples = torch.zeros(500 * n_classes).cuda()
         self.ood_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.ood_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
 
@@ -386,7 +374,6 @@ class VOSModel(nn.Module):
         self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
         self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
-
         self.ood_mean = nn.Parameter(self.running_ood_samples.mean(), requires_grad=False)
         if self.running_ood_samples.nonzero().shape[0] > 0:
             self.ood_std = nn.Parameter(self.running_ood_samples.std(), requires_grad=False)
@@ -411,42 +398,23 @@ class VOSModel(nn.Module):
 
     def ood_pred(self, x):
         lse = self.log_sum_exp(x, dim=1)
-        # out_1 = torch.nn.LeakyReLU(inplace=True)(lse.unsqueeze(1))
-        out_1 = self.logistic_regression(lse.unsqueeze(1))
         pred = torch.argmax(x, 1)
         run_means = [self.vos_means[t] for t in pred]
         run_means = torch.stack(run_means)
         run_stds = [self.vos_stds[t] for t in pred]
         run_stds = torch.stack(run_stds)
-        #run_norms = torch.distributions.normal.Normal(run_means, run_stds)
-        #out_2 = (1-run_norms.cdf(lse)) * 2 - 1
-        # out_2 = torch.nn.LeakyReLU()(out_2)
-        #out_j = (run_means * out_2) #(torch.pow(run_means+run_stds, 2) / torch.pow(lse, 2))
-        out_s = torch.softmax(out_1, 1)
-        #ood_dist = torch.distributions.normal.Normal(self.ood_mean, self.ood_std)
-
-        shifted_means = run_means - lse
-        out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)
-        #s = torch.softmax(x, 1)
+        clamped_inp = torch.clamp(lse, min=0.001)
+        shifted_means = (self.ood_mean-run_stds) * (torch.log(run_means/clamped_inp))
+        out_j = (shifted_means).unsqueeze(1)
         output = torch.cat((x, out_j), 1)
-        # #output = (run_means - run_stds).unsqueeze(1) - x
-        # output = torch.nn.LeakyReLU(inplace=True)(output)
-        #residual = self.logistic_regression2(output)
-        # output2 = torch.nn.LeakyReLU(inplace=True)(output2)
-        # residual = self.logistic_regression3(output2)
-        #residual = torch.nn.LeakyReLU(inplace=True)(residual)
-        #output3 = residual + torch.cat((x, torch.zeros_like(run_means).unsqueeze(1).cuda()), 1)
         return output
 
     def forward_step(self, inp):
         x = self.model.get_features(inp)
         x = self.global_pool(x)
-        x = self.classifier(x)
         x = x.view(x.size(0), -1)
-        x = self.to_multivariate_variables(x)
-        output = nn.ReLU(inplace=True)(x)
+        output = self.mcmc_layer(x)
         pred = self.fc(output)
-        # pred = nn.ReLU(inplace=True)(pred)
         return pred, output
 
     def update_lse(self, pred, target):
@@ -472,7 +440,6 @@ class VOSModel(nn.Module):
             except:
                 print(k, v.shape)
 
-
     def cdf_class(self, x, c):
         norm = torch.distributions.normal.Normal(self.vos_means[c], self.vos_stds[c])
         cdf = norm.cdf(x)
@@ -485,17 +452,13 @@ class VOSModel(nn.Module):
 
     def forward(self, x, y=None):
         pred, output = self.forward_step(x)
-        if y is not None and self.at_epoch >= (self.start_epoch-1):
+        if y is not None and self.at_epoch >= (self.start_epoch - 1):
             self.update_lse(pred, y)
         return [pred, output]
 
     def calibrate_means_stds(self, means, stds):
         self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
         self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
-
-    # def forward(self, x):
-    #     pred, _ = self.forward_vos(x)
-    #     return pred
 
     def predict(self, x):
         self.eval()
@@ -515,7 +478,7 @@ class VOSModel(nn.Module):
         lr_stack = torch.stack(logistic_reg)
         lr_soft = torch.softmax(lr_stack, dim=-1)
         log_sum_exps = self.log_sum_exp(output_stack, dim=2)
-        #log_sum_exps = torch.logsumexp(output_stack, dim=2)
+        # log_sum_exps = torch.logsumexp(output_stack, dim=2)
         lse_m = log_sum_exps.mean(0)
         lse_std = log_sum_exps.std(0)
         preds = [torch.softmax(output, dim=1) for output in outputs]
@@ -540,192 +503,6 @@ class Gamma(torch.distributions.gamma.Gamma):
         if self._validate_args:
             self._validate_sample(value)
         return torch.igamma(self.concentration, self.rate * value)
-
-
-class VOSModelVT(nn.Module):
-    def __init__(self, model_name="gluon_resnext50_32x4d", n_classes=8, drop_rate=0.5, start_epoch=20):
-        super(VOSModelVT, self).__init__()
-        self.start_epoch = start_epoch
-        if 'g_VGG' in model_name:
-            self.model = GhostVGG(model_name[2:], n_classes, drop_rate)
-        else:
-            self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
-        self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            SuperDropout(drop_rate),
-            torch.nn.Linear(self.model.num_features, self.model.num_features),
-            SuperDropout(drop_rate),
-            nn.ReLU(True),
-        )
-        self.to_multivariate_variables = torch.nn.Linear(self.model.num_features, 128)
-        self.fc = torch.nn.Linear(128, n_classes)
-
-        self.running_means = []
-        self.running_stds = []
-        self.at_epoch = 0
-        for _ in range(n_classes):
-            self.running_means.append(torch.zeros(1000))
-            self.running_stds.append(torch.ones(1000))
-        self.vos_mean = nn.Parameter(torch.zeros([n_classes]), requires_grad=False)
-        self.vos_std = nn.Parameter(torch.ones([n_classes]), requires_grad=False)
-        self.idd_mean = torch.tensor(15.0)
-        self.idd_std = torch.tensor(1.0)
-        self.running_ood_samples = torch.zeros(1000)
-        self.ood_mean = torch.tensor(0.0)
-        self.ood_std = torch.tensor(1.0)
-
-        self.loss_fn = nn.CrossEntropyLoss()
-
-    def forward_step(self, x):
-        x = self.model.forward_features(x)[0]
-        # x = self.global_pool(x)
-        # x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        output = self.to_multivariate_variables(x)
-        pred = self.fc(output)
-        return pred, output
-
-    def update_lse(self, pred, target):
-        lse = torch.clamp_max(torch.logsumexp(pred, dim=1), self.idd_mean.cuda() + self.idd_std.cuda())
-        pred_idc = torch.argmax(pred, dim=1)
-
-        cls_means = {}
-        for x, y in enumerate(pred_idc):
-            y = int(y)
-            if target[x] != y:
-                self.running_ood_samples[0] = lse[x]
-                self.running_ood_samples = self.running_ood_samples.roll(1)
-            elif y not in cls_means:
-                cls_means[y] = lse[x].unsqueeze(0)
-            else:
-                cls_means[y] = torch.cat([cls_means[y], lse[x].unsqueeze(0)])
-
-        for k, v in cls_means.items():
-            self.running_means[k][0] = v.mean()
-            self.running_means[k] = self.running_means[k].roll(1)
-            self.running_stds[k][0] = torch.tensor(1) if v.std().isnan() else v.std()
-            self.running_stds[k] = self.running_stds[k].roll(1)
-
-            idx = self.running_means[k] != 0
-            self.vos_mean[k] = self.running_means[k][idx].mean()
-            self.vos_std[k] = self.running_stds[k][idx].mean()
-        self.idd_mean = self.vos_mean.mean(0).detach()
-        self.idd_std = self.vos_std.mean(0).detach()
-
-        if self.running_ood_samples.sum() != 0:
-            nonzero_samples = self.running_ood_samples[self.running_ood_samples.nonzero(as_tuple=True)]
-            if nonzero_samples.shape[0] > 1:
-                self.ood_mean = nonzero_samples.mean(0).detach() * 0.9
-                self.ood_std = nonzero_samples.std(0).detach()
-
-    def cdf_class(self, x, c):
-        norm = torch.distributions.normal.Normal(self.vos_mean[c] - self.vos_std[c] / 2, self.vos_std[c])
-        cdf = norm.cdf(torch.tensor(x))
-        return cdf
-
-    def cdf(self, x):
-        norm = torch.distributions.normal.Normal(self.vos_mean.mean() - self.vos_std.mean() / 2, self.vos_std.mean())
-        cdf = norm.cdf(torch.tensor(x))
-        return cdf
-
-    def forward(self, x, y=None):
-        pred, output = self.forward_step(x)
-        if self.at_epoch >= self.start_epoch and y is not None:
-            self.update_lse(pred, y)
-        return pred, output
-
-    # def forward(self, x):
-    #     pred, _ = self.forward_vos(x)
-    #     return pred
-
-    def predict(self, x):
-        self.train()
-        pred, _ = self.forward_step(x)
-        return pred
-
-    def evaluate_classification(self,
-                                preds,
-                                samples=10,
-                                std_multiplier=2):
-        return eval_samples(self, preds, samples, std_multiplier)
-
-    def loss(self, x, y):
-        return self.loss_fn(x, y)
-
-
-class VOSBayes(nn.Module):
-    def __init__(self, n_classes=9, start_epoch=20):
-        super().__init__()
-        self.start_epoch = start_epoch
-        self.model = BayesVGG16(n_classes)
-        self.running_means = []
-        self.running_stds = []
-        self.at_epoch = 0
-        for _ in range(n_classes):
-            self.running_means.append(torch.zeros(1000))
-            self.running_stds.append(torch.ones(1000))
-        self.vos_mean = nn.Parameter(torch.zeros([n_classes]), requires_grad=False)
-        self.vos_std = nn.Parameter(torch.ones([n_classes]), requires_grad=False)
-        self.loss_fn = nn.CrossEntropyLoss()
-        self.sample_rate = 10
-        self.k_comp = 1e-6
-
-    def update_lse(self, pred):
-        lse = torch.logsumexp(pred, dim=1)
-        pred_idc = torch.argmax(pred, dim=1)
-        cls_means = {}
-
-        for x, y in enumerate(pred_idc):
-            y = int(y)
-            if y not in cls_means:
-                cls_means[y] = lse[x].unsqueeze(0)
-            else:
-                cls_means[y] = torch.cat([cls_means[y], lse[x].unsqueeze(0)])
-
-        for k, v in cls_means.items():
-            self.running_means[k][0] = v.mean()
-            self.running_means[k] = self.running_means[k].roll(1)
-            self.running_stds[k][0] = torch.tensor(1) if v.std().isnan() else v.std()
-            self.running_stds[k] = self.running_stds[k].roll(1)
-
-            idx = self.running_means[k] != 0
-            self.vos_mean[k] = self.running_means[k][idx].mean()
-            self.vos_std[k] = self.running_stds[k][idx].mean()
-
-    def cdf_class(self, x, c):
-        norm = torch.distributions.normal.Normal(self.vos_mean[c], self.vos_std[c])
-        cdf = norm.cdf(torch.tensor(x))
-        return cdf
-
-    def cdf(self, x):
-        norm = torch.distributions.normal.Normal(self.vos_mean.mean(), self.vos_std.mean())
-        cdf = norm.cdf(torch.tensor(x))
-        return cdf
-
-    def forward_vos(self, x):
-        self.train()
-        pred, output = self.forward_step(x)
-        if self.at_epoch >= self.start_epoch:
-            self.update_lse(pred)
-        return pred, output
-
-    def predict(self, x):
-        self.train()
-        pred, _ = self.forward_step(x)
-        return pred
-
-    def evaluate_classification(self,
-                                preds,
-                                samples=10,
-                                std_multiplier=2):
-        return eval_samples(self, preds, samples, std_multiplier)
-
-    def loss(self, x, y):
-        return self.sample_elbo(inputs=x,
-                                labels=y,
-                                criterion=self.loss_fn,
-                                sample_nbr=self.sample_rate,
-                                complexity_cost_weight=self.k_comp)
 
 
 class GroupSort(nn.Module):

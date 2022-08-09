@@ -31,13 +31,12 @@ from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ds='cifar10'):
     try:
-        ds = 'cifar10'
         torch.cuda.empty_cache()
         val_dir = os.path.join(root_dir, 'val_set')
         train_dir = os.path.join(root_dir, 'train_set')
-        image_size = 128
+
         epochs = epochs
         wandb.init(
             project="Uncert_paper",
@@ -45,7 +44,6 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                 "learning_rate": lr,
                 "gamma": 0.1,
                 "batch_size": batch_size,
-                "image_size": image_size,
                 "total_epochs": epochs,
                 "ra": ra,
                 "rd": Path(root_dir).name,
@@ -64,25 +62,34 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
 
         print(torch.cuda.get_device_name(0))
         workers = 4
-        if ds == 'shippinglab':
+        if ds == 'ships':
+            image_size = 64
+            mean = np.array([x / 255 for x in [115.8, 115.0, 116.0]])
+            std = np.array([x / 255 for x in [52.2, 51.0, 55.6]])
+
+            transforms.ToTensor(),
+            transforms.Normalize(mean.tolist(), std.tolist()),
+            letterbox((image_size, image_size), color=mean)
+            wandb.config['image_size'] = image_size
             cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
             gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-            rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]),
+            rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(16), transforms.Resize(image_size)]),
                                          p=0.2)
-            rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
-                                          p=0.2)
+
             dataset = ShippingLabClassification(root_dir=train_dir,
                                                 transform=transforms.Compose([
-                                                    letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
                                                     transforms.RandomHorizontalFlip(),
-                                                    cj, gauss, rez, rez2
+                                                    cj, gauss, rez,
+                                                    transforms.Normalize(mean.tolist(), std.tolist()),
+                                                    letterbox((image_size, image_size), color=mean)
                                                 ]))
 
             val_set = ShippingLabClassification(root_dir=val_dir,
                                                 transform=transforms.Compose([
-                                                    letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
+                                                    transforms.Normalize(mean.tolist(), std.tolist()),
+                                                    letterbox((image_size, image_size), color=mean)
                                                 ]))
 
             key_to_class = dict((v, k) for k, v in dataset.classes.items())
@@ -93,11 +100,13 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                                       shuffle=False, num_workers=workers, pin_memory=True, persistent_workers=True)
 
         if ds == 'cifar10':
+            image_size = 32
+            wandb.config['image_size'] = image_size
             mean = [x / 255 for x in [125.3, 123.0, 113.9]]
             std = [x / 255 for x in [63.0, 62.1, 66.7]]
 
             transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
+                transforms.RandomCrop(image_size, padding=4),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std),
@@ -137,9 +146,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
         if wandb.config.method == 'vos':
             loader_len = len(t_dataloader)
             model_param = [x for x in list(model.parameters()) if x.requires_grad]
-            #opt = torch.optim.AdamW(model_param, lr=wandb.config.learning_rate)
             opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=5e-4, nesterov=True)
-            scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
+            scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
@@ -165,16 +173,12 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
         for epoch in range(epochs):
             model.train()
             net_l, meta_losses_clean, m_cross, m_reg, vos_l, kl_f_l = [], [], [], [], [], []
-            if ds == 'shippinglab':
-                tqdm_dl = tqdm(range(200))
-                generator = cycle(iter(t_dataloader))
-            if ds == 'cifar10':
-                tqdm_dl = tqdm(t_dataloader)
+            tqdm_dl = tqdm(t_dataloader)
             for i, data in enumerate(tqdm_dl, 0):
                 # Samples the batch
-                if ds == 'shippinglab':
-                    imgs, lbls, idxs, paths = next(generator)
-                if ds == 'cifar10':
+                if ds == 'ships':
+                    imgs, lbls, idxs, paths = data
+                else:
                     imgs, lbls = data
                     idxs = 0
                     paths = 0
@@ -239,7 +243,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
                 with torch.no_grad():
                     pbar = tqdm(enumerate(v_dataloader, 0))
                     for i, data in pbar:
-                        if ds == 'shippinglab':
+                        if ds == 'ships':
                             t_imgs, t_lbls, _, _ = data
                         if ds == 'cifar10':
                             t_imgs, t_lbls = data
@@ -315,6 +319,6 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ):
 
 
 if __name__ == "__main__":
-    path = r'Q:\uncert_data\data_cifar_cleaned'
+    path = r'C:\Users\jobe\git\SLC\data\ships'
     for name, z in zip(['vos', 'dropout', 'bayes'], [1e-1, 1e-4, 1e-2]):
-        run_net(path, False, net_method=name, lr=z)
+        run_net(path, False, net_method=name, lr=z, ds='ships')

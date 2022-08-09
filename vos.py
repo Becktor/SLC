@@ -80,7 +80,7 @@ def vos_update(model, vos_dict):
             criterion = torch.nn.CrossEntropyLoss()
             #out_1 = torch.nn.LeakyReLU(inplace=True)(input_for_lr)
             out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
-            lr_reg_loss = criterion(out_1, labels_for_lr.long())
+            #lr_reg_loss = criterion(out_1, labels_for_lr.long())
 
             #out_2=model.logistic_regression((gg-input_for_lr).view(-1, 1))
 
@@ -93,14 +93,17 @@ def vos_update(model, vos_dict):
 
             # crit 2
             weight_crit2 = torch.ones(vos_dict["num_classes"] + 1).cuda()
-            weight_crit2[-1] = 1 / vos_dict["bs"]
+            weight_crit2[-1] = 0
             criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
             #run_norms = torch.distributions.normal.Normal(run_means, run_stds)
             #out_2 = (1 - run_norms.cdf(input_for_lr))*2 - 1
             #out_2 = torch.nn.LeakyReLU()(out_2)
             out_s = torch.softmax(out_1, 1)
-            shifted_means = run_means - input_for_lr
-            out_j = (shifted_means * out_s[:, 0]).unsqueeze(1)#(run_means * out_2).unsqueeze(1)#(torch.pow(run_means + run_stds, 2) / torch.pow(input_for_lr, 2)).unsqueeze(1)
+            clamped_inp = torch.clamp(input_for_lr, min=0.001)
+            #clamped_run_means = torch.clamp(run_means, min=1)
+            shifted_means = (model.ood_mean-run_stds) * torch.log(run_means/clamped_inp)
+            #shift_ood = run_means -
+            out_j = (shifted_means).unsqueeze(1)#(run_means * out_2).unsqueeze(1)#(torch.pow(run_means + run_stds, 2) / torch.pow(input_for_lr, 2)).unsqueeze(1)
             #out_j = torch.nn.Tanh()(out_j).unsqueeze(1)
             #s = torch.softmax(input_for_lr_2, 1)
             output = torch.cat((input_for_lr_2, out_j), 1)
@@ -112,9 +115,11 @@ def vos_update(model, vos_dict):
             #catted = torch.cat((input_for_lr_2, torch.zeros_like(out_j).cuda()), 1)
             #output3 = catted + residual
             xe_outlier = criterion2(output, lbl2.long())
-            # BCE = torch.nn.BCEWithLogitsLoss()
-            # inv = (~labels_for_lr.bool()).float()
-            # lr_reg_loss = BCE(output[:128, -1], inv[:128])
+            BCE = torch.nn.BCEWithLogitsLoss()
+            inv = (~labels_for_lr.bool()).float()
+            out_1 = model.logistic_regression(output[:, -1].unsqueeze(1))
+            lr_reg_loss = criterion(out_1, inv.long())
+            #lr_reg_loss = BCE(output[:128, -1], inv[:128])
             #
             # #
             # if vos_dict["epoch"] >= model.start_epoch + 1:
