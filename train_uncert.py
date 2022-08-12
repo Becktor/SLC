@@ -8,7 +8,7 @@ import higher as higher
 import timm
 import torch
 from torch.utils.data import Dataset, DataLoader
-from DataLoader import ShippingLabClassification, letterbox
+from DataLoader import ShippingLabClassification, Letterbox
 from torchvision import transforms, utils
 import matplotlib.pyplot as plt
 from tqdm import tqdm

@@ -92,13 +92,14 @@ def vos_update(model, vos_dict):
 
             # crit 2
             #weight_crit2 = torch.ones(vos_dict["num_classes"] + 1).cuda()
-            #weight_crit2[-1] = 0
+            #weight_crit2[-1] = 1/128
             #criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
 
-            clamped_inp = torch.clamp(input_for_lr, min=0.001)
-            shifted_means = torch.clamp(run_means - run_stds, min=0) * (torch.log(run_means/clamped_inp))
-            #out_j = (shifted_means).unsqueeze(1)
-            #output = torch.cat((input_for_lr_2, out_j), 1)
+            clamped_inp = torch.clamp(input_for_lr, min=0.0001)
+            shifted_means = torch.log(run_means/clamped_inp)
+            xe = shifted_means * model.ood_mean
+            out_j = xe.unsqueeze(1)
+            output = torch.cat((input_for_lr_2, out_j), 1)
             #xe_outlier = criterion2(output, lbl2.long())
             inv = (~labels_for_lr.bool()).float()
             out_1 = model.logistic_regression(shifted_means.view(-1, 1))
@@ -119,7 +120,7 @@ def hist_train_samples(model):
     import matplotlib.pyplot as plt
     import numpy as np
     ad = []
-    for i,x in enumerate(model.training_outputs):
+    for i, x in enumerate(model.training_outputs):
         d = x.detach().cpu().numpy()
         plt.hist(d, bins=50)
         plt.show()

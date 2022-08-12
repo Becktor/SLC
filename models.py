@@ -8,7 +8,7 @@ import bayes_models as bm
 from torchvision import transforms as T
 from GhostModel import GhostVGG
 import torch.nn.functional as F
-from gmm import GaussianMixture as GMM
+#from gmm import GaussianMixture as GMM
 from torchvision.models import resnet18, mobilenetv3
 import numpy as np
 from helper_functions.loss import FocalLoss
@@ -302,13 +302,13 @@ class VOSModel(nn.Module):
         self.global_pool = nn.AdaptiveAvgPool2d(1)
         self.mcmc_layer = nn.Sequential(
             SuperDropout(drop_rate),
-            torch.nn.Linear(in_channels, out_channels, bias=False),
+            nn.Linear(in_channels, out_channels, bias=False),
             nn.ReLU(inplace=True),
             SuperDropout(drop_rate),
         )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
+        self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         self.fc = torch.nn.Linear(vos_multivariate_dim, n_classes)
         self.weight_energy = torch.nn.Linear(n_classes, 1)
         torch.nn.init.uniform_(self.weight_energy.weight)
@@ -334,18 +334,18 @@ class VOSModel(nn.Module):
 
         self.loss_fn = nn.CrossEntropyLoss()  # FocalLosses(gamma=1.2, reduction='mean')
 
-    def fit_gmm(self):
-        means, stds = [], []
-        for i in range(len(self.training_outputs)):
-            x = self.training_outputs[i]
-            gmm = GMM(n_components=2, n_features=1, covariance_type='diag')
-            gmm.cuda()
-            gmm.fit(x[x.nonzero()])
-            means.append(gmm.mu.squeeze())
-            stds.append(torch.sqrt(gmm.var).squeeze())
-
-        self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
-        self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
+    # def fit_gmm(self):
+    #     means, stds = [], []
+    #     for i in range(len(self.training_outputs)):
+    #         x = self.training_outputs[i]
+    #         gmm = GMM(n_components=2, n_features=1, covariance_type='diag')
+    #         gmm.cuda()
+    #         gmm.fit(x[x.nonzero()])
+    #         means.append(gmm.mu.squeeze())
+    #         stds.append(torch.sqrt(gmm.var).squeeze())
+    #
+    #     self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
+    #     self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
     def fit_gauss(self):
         means, stds = [], []
@@ -376,7 +376,7 @@ class VOSModel(nn.Module):
 
         value.exp().sum(dim, keepdim).log()
         """
-        #return torch.logsumexp(value, dim=dim)
+        return torch.logsumexp(value, dim=dim)
         if dim is not None:
             m, _ = torch.max(value, dim=dim, keepdim=True)
             value0 = value - m
@@ -396,8 +396,8 @@ class VOSModel(nn.Module):
         run_means = torch.stack(run_means)
         run_stds = [self.vos_stds[t] for t in pred]
         run_stds = torch.stack(run_stds)
-        clamped_inp = torch.clamp(lse, min=.001)
-        shifted_means = torch.clamp(run_means - run_stds, min=0) * (torch.log(run_means/clamped_inp))
+        clamped_inp = torch.clamp(lse, min=.0001)
+        shifted_means = torch.log(run_means/clamped_inp)
         out_j = shifted_means.unsqueeze(1)
         output = torch.cat((x, out_j), 1)
         return output
@@ -407,9 +407,9 @@ class VOSModel(nn.Module):
         x = self.model.get_features(inp)
         x = self.global_pool(x)
         x = x.view(x.size(0), -1)
-        output = self.mcmc_layer(x)
-        #x = self.to_multivariate_variables(x)
-        #output = nn.ReLU(inplace=True)(x)
+        x = self.mcmc_layer(x)
+        x = self.to_multivariate_variables(x)
+        output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
         return pred, output
 
@@ -448,6 +448,7 @@ class VOSModel(nn.Module):
         return cdf
 
     def forward(self, x, y=None):
+        self.eval()
         pred, output = self.forward_step(x)
         if y is not None and self.at_epoch >= (self.start_epoch-1):
             self.update_lse(pred, y)

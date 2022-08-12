@@ -65,7 +65,7 @@ idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [
 train_norms = {3: (14.008406, 3.8698266), 8: (16.991377, 3.6263654), 0: (15.370032, 3.7869778), 6: (15.591267, 3.399394), 1: (16.760761, 2.9231396), 9: (16.355757, 3.545238), 5: (16.184753, 4.906386), 7: (15.685531, 3.6368687), 4: (15.913696, 3.8837087), 2: (15.373063, 4.195742)}
 
 
-def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
+def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
     val_dir = os.path.join(root_dir, 'val_set')
     data = r'Q:\git\SLC\ckpts'
     image_size = 32
@@ -74,7 +74,6 @@ def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
     model_name = "wrn"
     torch.manual_seed(5)
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
-    norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
 
     if ds == 'ships':
         cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
@@ -179,7 +178,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
     # stds = [norms[v].stddev for v in range(len(norms))]
     #
     # model.calibrate_means_stds(nms, stds)
-
+    norms[10] = torch.distributions.Normal(model.ood_mean.cpu(), model.ood_std.cpu())
     if torch.cuda.is_available():
         model.cuda()
         torch.backends.cudnn.benchmark = True
@@ -233,7 +232,10 @@ def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
 
             img, lbl = show_epoch
             img = unorm(img)
-            oods.append((obj['lse_m']).cpu().numpy())
+            tp = torch.stack([norms[xx].mean.cpu() for xx in predicted.cpu().numpy()]).cuda()
+            oods.append((obj['lse_m'] - (obj['lse_s']/obj['lse_m'])*tp).cpu().numpy())
+            v = obj['lrs'].mean(0)[:, -1].cpu().numpy()
+            gss_oods.append(-v)
             key_to_class[10] = 'unsure'
             for elem in range(len(obj["mean"])):
                 if name == 'vos':
@@ -247,7 +249,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
                     conf_class = torch.tensor(0.0).cuda()
                     if cls != 10:
                         conf_class = norms_scaled[cls].cdf(ood_m)
-                    gss_oods.append(conf_class.cpu().numpy())
+                    #gss_oods.append(conf_class.cpu().numpy())
                     dlrs = lr_s.detach().cpu().numpy()
                     pred_cert.append((dlrs,
                                       conf_class.detach().cpu().numpy()))
@@ -439,7 +441,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=100, max_iter=2000):
         v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
         print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
 
-    return np.concatenate(oods, 0), np.array(gss_oods)
+    return np.concatenate(oods, 0), np.concatenate(gss_oods,0)
 
 
 # wrong_score.mean()
@@ -619,6 +621,7 @@ if __name__ == "__main__":
         ood1, ood2 = run_net(path, name='vos', ds=dataset)
         vos.append(fpr_tpr(iid1, ood1))
         gss.append(fpr_tpr(iid2, ood2))
+        #gss.append(fpr_tpr(iid2, ood2))
         print(f'dsvos: {vos[-1]}')
         print(f'gauss: {gss[-1]}')
         print(f'mean: {ood1.mean()}')
