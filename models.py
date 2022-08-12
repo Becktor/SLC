@@ -8,7 +8,7 @@ import bayes_models as bm
 from torchvision import transforms as T
 from GhostModel import GhostVGG
 import torch.nn.functional as F
-from gmm import GaussianMixture as GMM
+#from gmm import GaussianMixture as GMM
 from torchvision.models import resnet18, mobilenetv3
 import numpy as np
 from helper_functions.loss import FocalLoss
@@ -342,18 +342,18 @@ class VOSModel(nn.Module):
 
         self.loss_fn = nn.CrossEntropyLoss()  # FocalLosses(gamma=1.2, reduction='mean')
 
-    def fit_gmm(self):
-        means, stds = [], []
-        for i in range(len(self.training_outputs)):
-            x = self.training_outputs[i]
-            gmm = GMM(n_components=2, n_features=1, covariance_type='diag')
-            gmm.cuda()
-            gmm.fit(x[x.nonzero()])
-            means.append(gmm.mu.squeeze())
-            stds.append(torch.sqrt(gmm.var).squeeze())
-
-        self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
-        self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
+    # def fit_gmm(self):
+    #     means, stds = [], []
+    #     for i in range(len(self.training_outputs)):
+    #         x = self.training_outputs[i]
+    #         gmm = GMM(n_components=2, n_features=1, covariance_type='diag')
+    #         gmm.cuda()
+    #         gmm.fit(x[x.nonzero()])
+    #         means.append(gmm.mu.squeeze())
+    #         stds.append(torch.sqrt(gmm.var).squeeze())
+    #
+    #     self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)
+    #     self.vos_stds = nn.Parameter(torch.stack(stds), requires_grad=False)
 
     def fit_gauss(self):
         means, stds = [], []
@@ -454,7 +454,7 @@ class VOSModel(nn.Module):
         pred, output = self.forward_step(x)
         if y is not None and self.at_epoch >= (self.start_epoch - 1):
             self.update_lse(pred, y)
-        return [pred, output]
+        return [pred, output]#, self.ood_pred(pred)]
 
     def calibrate_means_stds(self, means, stds):
         self.vos_means = nn.Parameter(torch.stack(means), requires_grad=False)

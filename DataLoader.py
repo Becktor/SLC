@@ -1,10 +1,8 @@
-import cv2
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 from PIL import Image
 import torch
 import numpy as np
-from skimage import io, transform
 import os
 import torchvision.datasets as dset
 import csv
@@ -300,7 +298,7 @@ class PennFudanDataset(torch.utils.data.Dataset):
 #     def get_classes(self):
 #         return self.classes
 
-class letterbox:
+class Letterbox:
     def __init__(self,  new_shape=(128, 128), color=(114, 114, 114), stride=32, unorm=None, debug=False):
         self.new_shape = new_shape
         self.color = color
