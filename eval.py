@@ -71,7 +71,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=10, ds_cmp='cifar'):
     val_dir = os.path.join(root_dir, 'val_set')
     data = r'C:\Users\jobe\git\SLC\ckpts'
 
-    batch_size = 128
+    batch_size = 1
     workers = 4
     model_name = "wrn"
     torch.manual_seed(5)
@@ -103,7 +103,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=10, ds_cmp='cifar'):
 
 
         v_dataloader = DataLoader(val_set, batch_size=batch_size,
-                                  shuffle=True, num_workers=workers)
+                                  shuffle=False, num_workers=workers)
         # key_to_class = {b: a for a, b in val_set.classes.items()}
 
     else:
@@ -187,7 +187,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=10, ds_cmp='cifar'):
 
         # testset = trainset
         v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                                   shuffle=True, num_workers=workers, persistent_workers=True)
+                                                   shuffle=False, num_workers=workers, persistent_workers=True)
 
     path = os.path.join(data, model_name + "_" + name + "_100.pt")
     model_dict = torch.load(os.path.join(root_dir, path))

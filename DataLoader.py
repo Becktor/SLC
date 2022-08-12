@@ -301,8 +301,7 @@ class PennFudanDataset(torch.utils.data.Dataset):
 #         return self.classes
 
 class letterbox:
-    def __init__(self,  new_shape=(128, 128), color=(114, 114, 114), auto=False,
-                 scaleFill=False, scaleup=True, stride=32, unorm=None, debug=False):
+    def __init__(self,  new_shape=(128, 128), color=(114, 114, 114), stride=32, unorm=None, debug=False):
         self.new_shape = new_shape
         self.color = color
         self.stride = stride

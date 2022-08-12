@@ -404,7 +404,7 @@ class VOSModel(nn.Module):
         run_stds = [self.vos_stds[t] for t in pred]
         run_stds = torch.stack(run_stds)
         clamped_inp = torch.clamp(lse, min=0.001)
-        shifted_means = (self.ood_mean-run_stds) * (torch.log(run_means/clamped_inp))
+        shifted_means = (self.ood_mean-self.ood_std) * (torch.log(run_means/clamped_inp))
         out_j = (shifted_means).unsqueeze(1)
         output = torch.cat((x, out_j), 1)
         return output

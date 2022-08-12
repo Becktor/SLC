@@ -67,9 +67,6 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ds
             mean = np.array([x / 255 for x in [115.8, 115.0, 116.0]])
             std = np.array([x / 255 for x in [52.2, 51.0, 55.6]])
 
-            transforms.ToTensor(),
-            transforms.Normalize(mean.tolist(), std.tolist()),
-            letterbox((image_size, image_size), color=mean)
             wandb.config['image_size'] = image_size
             cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
             gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)

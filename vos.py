@@ -101,7 +101,7 @@ def vos_update(model, vos_dict):
             out_s = torch.softmax(out_1, 1)
             clamped_inp = torch.clamp(input_for_lr, min=0.001)
             #clamped_run_means = torch.clamp(run_means, min=1)
-            shifted_means = (model.ood_mean-run_stds) * torch.log(run_means/clamped_inp)
+            shifted_means = (model.ood_mean-model.ood_std) * torch.log(run_means/clamped_inp)
             #shift_ood = run_means -
             out_j = (shifted_means).unsqueeze(1)#(run_means * out_2).unsqueeze(1)#(torch.pow(run_means + run_stds, 2) / torch.pow(input_for_lr, 2)).unsqueeze(1)
             #out_j = torch.nn.Tanh()(out_j).unsqueeze(1)
