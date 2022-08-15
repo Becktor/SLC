@@ -5,7 +5,7 @@ from models import BayesVGG16, DropoutModel, TTAModel, VOSModel
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from DataLoader import ShippingLabClassification, letterbox
+from DataLoader import ShippingLabClassification, Letterbox
 from torchvision import transforms
 import tensorrt as trt
 from torch2trt import torch2trt, TRTModule
@@ -77,6 +77,8 @@ def run():
 
     model_trt = TRTModule()
     model_trt.load_state_dict(torch.load(path[:-2]+'pth'))
+    model_trt.eval().cuda()
+    model_trt(data)
     y = eval_samples_torch(torch_model, x)
     yt = eval_samples_torch(model_trt, x)
     val_dir = os.path.join(r'/mnt/ext/data/ds1_wo_f', 'val_set')
@@ -86,7 +88,7 @@ def run():
     torch.manual_seed(1)
     val_set = ShippingLabClassification(root_dir=val_dir,
                                         transform=transforms.Compose([
-                                            letterbox((image_size, image_size)),
+                                            Letterbox((image_size, image_size)),
                                             transforms.ToTensor()
                                         ]))
 
