@@ -1,7 +1,7 @@
 import os
 import scipy
 import torch
-from models import BayesVGG16, DropoutModel, TTAModel, VOSModel
+from models_VOS import VOSModel
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
@@ -70,21 +70,23 @@ def run():
     torch_model = VOSModel(n_classes=8, model_name=model_name)
     name = 'vos'
 
-    path = os.path.join(ckpts, model_name + "_" + name + "_100_ships.pt")
-
+    path = os.path.join(ckpts, model_name + "_" + name + "_100_ships.pth")
+    print(path)
     model_dict = torch.load(path)
     torch_model.load_state_dict(model_dict['model_state_dict'])
     torch_model.eval().cuda()
     # convert to TensorRT feeding sample data as input
-    x = torch.randn(1, 3, 64, 64, requires_grad=True).cuda()
+    batch_size = 1
+    x = torch.randn(batch_size, 3, 64, 64, requires_grad=True).cuda()
 
     model_trt = TRTModule()
-    model_trt.load_state_dict(torch.load(path[:-2]+'pth'))
+    model_trt.load_state_dict(torch.load(path))
+
     model_trt.eval().cuda()
     y = torch_model.eval_samples(x)
     yt = eval_samples(model_trt, x)
     val_dir = os.path.join(r'/mnt/ext/data/ds1_wo_f', 'val_set')
-    batch_size = 1
+
     workers = 2
     torch.manual_seed(5)
 

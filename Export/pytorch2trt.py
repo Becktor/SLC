@@ -2,7 +2,7 @@ import tensorrt as trt
 from torch2trt import torch2trt
 import os
 import torch
-from models import BayesVGG16, DropoutModel, TTAModel, VOSModel
+from models_VOS import VOSModel
 
 method = 'vos'
 torch.manual_seed(0)
@@ -10,10 +10,7 @@ ckpts = r'../SL_model/'
 model_name = "wrn"
 test = True
 
-if method == 'dropout':
-    torch_model = DropoutModel(n_classes=8, model_name=model_name)
-    name = 'dropout'
-elif method == 'vos':
+if method == 'vos':
     torch_model = VOSModel(n_classes=8, model_name=model_name)
     name = 'vos'
 
@@ -28,7 +25,7 @@ x = torch.randn(batch_size, 3, 64, 64).cuda()
 y = torch_model(x)
 
 # convert to TensorRT feeding sample data as input
-model_trt = torch2trt(torch_model, [x], fp16_mode=True, default_device_type=trt.DeviceType.DLA)
+model_trt = torch2trt(torch_model, [x], fp16_mode=True)
 
 y_trt = model_trt(x)
 
