@@ -1,37 +1,24 @@
-import copy
-import csv
 import os
 import traceback
-
-import fiftyone as fo
-import higher as higher
-import timm
 import torch
 from torch.utils.data import Dataset, DataLoader
 from DataLoader import ShippingLabClassification, Letterbox
-from torchvision import transforms, utils
+from torchvision import transforms
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
-import itertools
 import wandb
-from models import BayesVGG16, BayesGluonResnext50, DropoutModel, TTAModel, VOSModel
-import torch.nn as nn
+from models import BayesVGG16, DropoutModel, TTAModel, VOSModel
 from pathlib import Path
-import torch.nn.functional as F
 from vos import vos_update
 import torchvision
-import torchvision.transforms.functional as TF
-from torch.utils.data.dataloader import default_collate
 from torchinfo import summary
 from helper_functions.loss import CosineWarmupLR
 torch.manual_seed(0)
 from itertools import cycle
-from timm.data import resolve_data_config
-from timm.data.transforms_factory import create_transform
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
+def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
         ds = 'cifar10'
         torch.cuda.empty_cache()
@@ -73,7 +60,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                                           p=0.2)
             dataset = ShippingLabClassification(root_dir=train_dir,
                                                 transform=transforms.Compose([
-                                                    letterbox((image_size, image_size)),
+                                                    Letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
                                                     transforms.RandomHorizontalFlip(),
                                                     cj, gauss, rez, rez2
@@ -81,7 +68,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
             val_set = ShippingLabClassification(root_dir=val_dir,
                                                 transform=transforms.Compose([
-                                                    letterbox((image_size, image_size)),
+                                                    Letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
                                                 ]))
 
@@ -97,8 +84,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
             std = [x / 255 for x in [63.0, 62.1, 66.7]]
 
             transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
                 transforms.RandomHorizontalFlip(),
+                transforms.RandomCrop(32, padding=4),
                 transforms.ToTensor(),
                 transforms.Normalize(mean, std),
             ])
@@ -110,15 +97,15 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
             trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
                                                     download=True, transform=transform_train)
-            t_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-                                                       shuffle=True, num_workers=workers, persistent_workers=True)
+            t_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True,
+                                                       num_workers=workers, persistent_workers=True, drop_last=True)
 
             testset = torchvision.datasets.CIFAR10(root='./data', train=False,
                                                    download=True, transform=transform_test)
-            v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                                       shuffle=False, num_workers=workers, persistent_workers=True)
+            v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False,
+                                                       num_workers=workers, persistent_workers=True, drop_last=True)
             key_to_class = {k: v for k, v in enumerate(trainset.classes)}
-
+        multivariate_dim = 128
         n_classes = len(key_to_class.keys())
         if wandb.config.method == 'bayes':
             model = BayesVGG16(n_classes=n_classes)
@@ -127,7 +114,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
             model = DropoutModel(n_classes=n_classes, model_name=model_name)
             name = 'dropout'
         elif wandb.config.method == 'vos':
-            model = VOSModel(n_classes=n_classes, model_name=model_name, start_epoch=start_vos)
+            model = VOSModel(n_classes=n_classes, model_name=model_name,
+                             start_epoch=start_vos, vos_multivariate_dim=multivariate_dim)
         else:
             model = TTAModel(n_classes=n_classes, model_name=model_name)
             name = 'tta'
@@ -138,13 +126,16 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
             loader_len = len(t_dataloader)
             model_param = [x for x in list(model.parameters()) if x.requires_grad]
             #opt = torch.optim.AdamW(model_param, lr=wandb.config.learning_rate)
-            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=5e-4, nesterov=True)
-            scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
+            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=0.0005)#, nesterov=True)
+            #scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
+
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [80, 140], gamma=0.1)
+
             number_dict = {}
             sample_number = 1000
             sample_from = 10000
             select = 1
-            data_dict = torch.zeros(n_classes, sample_number, 128).cuda()
+            data_dict = torch.zeros(n_classes, sample_number, multivariate_dim).cuda()
             for i in range(n_classes):
                 number_dict[i] = 0
             vos_dict = {
@@ -152,7 +143,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                 'sample_number': sample_number,
                 'sample_from': sample_from,
                 'select': select,
-                'loss_weight': 0.1,
+                'loss_weight': vos,
                 'data_dict': data_dict
             }
         else:
@@ -196,12 +187,12 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                     vos_dict["bs"] = batch_size
                     vos_loss, kl_f, kl_b = vos_update(model, vos_dict)
                     vos_loss = vos_loss * vos_dict['loss_weight']
-                    kl_f = kl_f
-                    kl_b = kl_b * 0.1
-                    loss = model.loss(pred, lbls)
-                    cost = vos_loss + kl_f + kl_b
+                    #kl_f = kl_f
+                    #kl_b = kl_b * 0.1
+                    cost = model.loss(pred, lbls) + vos_loss
+                    #cost = vos_loss# + kl_f + kl_b
                     #if cost == 0:
-                    cost += loss
+                    #cost += loss
 
                 else:
                     # with torch.cuda.amp.autocast():
@@ -212,7 +203,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
                 opt.step()
                 #if epoch < epochs-20:
-                scheduler.step()
+
                 net_l.append(cost.cpu().detach())
                 if wandb.config.method == 'vos':
                     model.fit_gauss()
@@ -234,7 +225,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
             net_losses.append(np.mean(net_l))
             acc, acc_u, acc_l = [], [], []
-
+            scheduler.step()
             if (1 + epoch) % 2 == 0:# and epoch > 6:
                 with torch.no_grad():
                     pbar = tqdm(enumerate(v_dataloader, 0))
@@ -249,8 +240,8 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                         # with torch.cuda.amp.autocast():
                         obj = model.evaluate_classification(t_imgs, samples=2, std_multiplier=2)
                         predicted = torch.argmax(obj['sp'], dim=1)
-                        if epoch >= start_vos:
-                            predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
+                        # if epoch >= start_vos:
+                        #     predicted = torch.argmax(obj['lr_soft'].mean(0), dim=1)
                         acc.append((predicted.int() == t_lbls.int()).float())
                         accuracy = torch.cat(acc, dim=0).mean().cpu()
                         predicted_upper = torch.argmax(obj['sp_u'], dim=1)
@@ -301,8 +292,12 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
                     'loss': np.mean(net_l),
                     'classes': key_to_class,
 
-                }, f"ckpts/{model_name}_{wandb.config.method}_{1 + epoch}.pt")
-
+                }, f"ckpts/{model_name}_{wandb.config.method}_{vos}_{1 + epoch}.pt")
+                try:
+                    os.remove(f"ckpts/{model_name}_{wandb.config.method}_{vos}_{epoch - 1}.pt")
+                except Exception as e:
+                    print(e)
+                    pass
                 wandb.log(log_dict)
                 if wandb.config.method == 'vos':
                     print(f'μ: {model.vos_mean.mean()}, σ: {model.vos_std.mean()}')
@@ -316,5 +311,9 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128):
 
 if __name__ == "__main__":
     path = r'Q:\uncert_data\data_cifar_cleaned'
-    for name, z in zip(['vos', 'dropout', 'bayes'], [1e-1, 1e-4, 1e-2]):
-        run_net(path, False, net_method=name, lr=z)
+    r = [0.02, 0.025, 0.03, 0.035]
+
+    for v in r:
+        name = 'vos'
+        z = 0.1
+        run_net(path, False, net_method=name, lr=z, vos=v)

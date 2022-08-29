@@ -172,12 +172,10 @@ def fpr_tpr(in_scores, out_scores, tpr_level=0.95):
     return fpr
 
 
-def fpr_at_tpr(pos, neg, tpr_level=0.95):
+def tpr_fpr(pos, neg, tpr_level=0.95):
     '''
     calculate the false positive error rate when tpr is 95%
     '''
-
-    thresh = np.quantile(pos, tpr_level)
-    fpr = np.mean(neg <= thresh)
-
+    thresh = np.quantile(pos, 1-tpr_level)
+    fpr = np.mean(neg >= thresh)
     return fpr

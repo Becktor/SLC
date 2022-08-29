@@ -18,7 +18,7 @@ class SuperDropout(nn.Module):
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, in_planes, out_planes, stride, dropRate=0.0, super_dropout=False):
+    def __init__(self, in_planes, out_planes, stride, dropRate=0.0):
         super(BasicBlock, self).__init__()
         self.bn1 = nn.BatchNorm2d(in_planes)
         self.relu1 = nn.ReLU(inplace=True)
@@ -32,7 +32,6 @@ class BasicBlock(nn.Module):
         self.equalInOut = (in_planes == out_planes)
         self.convShortcut = (not self.equalInOut) and nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride,
                                                                 padding=0, bias=False) or None
-        self.super_dropout = super_dropout
 
     def forward(self, x):
         if not self.equalInOut:
@@ -86,6 +85,7 @@ class WideResNet(nn.Module):
         # global average pooling and classifier
         self.bn1 = nn.BatchNorm2d(nChannels[3])
         self.relu = nn.ReLU(inplace=True)
+        self.super_drop = SuperDropout(p=drop_rate)
         self.fc = nn.Linear(nChannels[3], num_classes)
         self.nChannels = nChannels[3]
 
@@ -105,6 +105,7 @@ class WideResNet(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.relu(self.bn1(out))
+        out = self.super_drop(out)
         out = F.avg_pool2d(out, out.shape[-1])
         out = out.view(-1, self.nChannels)
         return self.fc(out)
@@ -115,6 +116,7 @@ class WideResNet(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.relu(self.bn1(out))
+        out = self.super_drop(out)
         out = F.avg_pool2d(out, out.shape[-1])
         out = out.view(-1, self.nChannels)
         return self.fc(out), out

@@ -28,8 +28,9 @@ import seaborn as sns
 import torchvision
 import sklearn
 from itertools import cycle
-from helper_functions.metrics import show_performance_fpr, get_measures, fpr_at_tpr, fpr_tpr
+from helper_functions.metrics import show_performance_fpr, get_measures, tpr_fpr, fpr_tpr
 import torchvision.datasets as dset
+import helper_functions.svhn_loader as svhn
 
 
 class TransformWrapper(object):
@@ -42,121 +43,17 @@ class TransformWrapper(object):
         return imgs
 
 
-idx_to_check = [[29, 1], [29, 1], [27, 3], [27, 3], [24, 4], [24, 4], [14, 5], [14, 5], [25, 6], [25, 6], [19, 14],
-                [19, 14], [12, 18], [12, 18], [17, 18], [17, 18], [14, 20], [14, 20], [14, 23], [14, 23], [4, 24],
-                [4, 24], [22, 24], [22, 24], [30, 24], [30, 24], [9, 25], [9, 25], [10, 25], [10, 25], [16, 25],
-                [16, 25], [23, 25], [23, 25], [5, 26], [5, 26], [6, 28], [6, 28], [7, 28], [7, 28], [8, 28], [8, 28],
-                [9, 28], [9, 28], [28, 34], [28, 34], [28, 37], [28, 37], [24, 39], [25, 39], [29, 39], [30, 39],
-                [30, 39], [31, 39], [1, 40], [2, 40], [28, 40], [22, 56], [23, 56], [18, 58], [28, 73], [29, 73],
-                [29, 73], [30, 73], [3, 74], [4, 74], [10, 82], [11, 82], [25, 83], [26, 83], [13, 84], [14, 84],
-                [3, 85], [4, 85], [18, 85], [16, 88], [17, 88], [20, 93], [21, 93], [21, 93], [22, 93], [24, 98],
-                [25, 98], [25, 98], [26, 98], [17, 99], [18, 99], [21, 99], [22, 99], [28, 99], [29, 99], [13, 101],
-                [14, 101], [1, 104], [2, 104], [26, 104], [27, 104], [28, 105], [29, 105], [12, 108], [6, 113],
-                [7, 113], [22, 113], [30, 119], [31, 119], [25, 120], [26, 120], [30, 121], [31, 121], [2, 122],
-                [16, 122], [17, 122], [28, 123], [29, 123], [19, 124], [20, 124], [2, 129], [3, 129], [15, 137],
-                [16, 137], [8, 143], [9, 143]]
-
-# train_norms = {4: (11.050959, 1.6934786), 3: (14.447998, 1.5380085), 5: (12.244996, 2.0072613),
-#                7: (15.813443, 1.7174519), 2: (16.055696, 2.0404303), 0: (14.964114, 1.7310742),
-#                1: (13.662182, 1.4823529), 6: (12.214176, 1.5037574)}
-
-# train_norms = {4: (22.641314, 2.6660843), 1: (21.820875, 1.7641367), 2: (20.12747, 2.3930283), 8: (13.655789, 1.2330345), 3: (22.682724, 3.5433457), 7: (19.041382, 1.8500489), 5: (20.446945, 2.444383), 6: (18.666367, 2.6390777), 0: (14.238019, 1.7003791), 9: (19.35532, 1.5455061)}
-# train_norms = {4: (-0.20737115, 0.7276402), 1: (0.73767483, 0.46118015), 2: (-0.59243923, 0.6190916), 8: (-1.2136457, 0.52655524), 3: (-0.055931814, 0.6492376), 7: (0.2306215, 0.4722455), 5: (0.035789445, 0.54746556), 6: (0.072558165, 0.50197697), 0: (0.06483747, 0.9217627), 9: (1.0638794, 0.5808415)}
-train_norms = {3: (14.008406, 3.8698266), 8: (16.991377, 3.6263654), 0: (15.370032, 3.7869778), 6: (15.591267, 3.399394), 1: (16.760761, 2.9231396), 9: (16.355757, 3.545238), 5: (16.184753, 4.906386), 7: (15.685531, 3.6368687), 4: (15.913696, 3.8837087), 2: (15.373063, 4.195742)}
+train_norms = {3: (14.008406, 3.8698266), 8: (16.991377, 3.6263654), 0: (15.370032, 3.7869778),
+               6: (15.591267, 3.399394), 1: (16.760761, 2.9231396), 9: (16.355757, 3.545238), 5: (16.184753, 4.906386),
+               7: (15.685531, 3.6368687), 4: (15.913696, 3.8837087), 2: (15.373063, 4.195742)}
 
 
-def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
-    val_dir = os.path.join(root_dir, 'val_set')
+def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None, n_samp=5, max_iter=1000000,
+            unorm=None):
     data = r'Q:\git\SLC\ckpts'
-    image_size = 32
-    batch_size = 128
-    workers = 4
+    batch_size = 200
     model_name = "wrn"
-    torch.manual_seed(5)
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
-
-    if ds == 'ships':
-        cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
-        gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-        rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]), p=0.2)
-        rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
-                                      p=0.2)
-        val_set = ShippingLabClassification(root_dir=val_dir,
-                                            transform=transforms.Compose([
-                                                letterbox((image_size, image_size)),
-                                                transforms.ToTensor(),
-                                                transforms.RandomHorizontalFlip(),
-                                                cj, gauss, rez, rez2
-                                            ]))
-
-        val_set = ShippingLabClassification(root_dir=val_dir,
-                                            transform=transforms.Compose([
-                                                letterbox((image_size, image_size)),
-                                                transforms.ToTensor()
-                                            ]))
-
-        v_dataloader = DataLoader(val_set, batch_size=batch_size,
-                                  shuffle=True, num_workers=workers)
-        key_to_class = {b: a for a, b in val_set.classes.items()}
-
-    else:
-        mean = np.array([x / 255 for x in [125.3, 123.0, 113.9]])
-        std = np.array([x / 255 for x in [63.0, 62.1, 66.7]])
-
-        transform_train = transforms.Compose([
-            transforms.Resize(image_size),
-            transforms.CenterCrop(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean.tolist(), std.tolist()),
-        ])
-
-        transform_test = transforms.Compose([
-            transforms.Resize((image_size, image_size)),
-            transforms.CenterCrop(image_size),
-            transforms.ToTensor(),
-            transforms.Normalize(mean.tolist(), std.tolist()),
-        ])
-        unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
-        trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                                download=False, transform=transform_train)
-        # v_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
-        #                                            shuffle=True, num_workers=workers, persistent_workers=True)
-
-        testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                               download=False, transform=transform_test)
-        if ds == 'SVHN':
-            testset = torchvision.datasets.SVHN(root='./data', split='test',
-                                                download=False, transform=transform_test)
-        if ds == 'dtd':
-            # /////////////// Textures ///////////////
-            testset = dset.ImageFolder(root="./data/dtd/images",
-                                       transform=transform_test)
-        if ds == 'places365':
-            # /////////////// Places365 ///////////////
-            testset = dset.ImageFolder(root="./data/places365/",
-                                        transform=transform_test)
-        if ds == 'LSUN_resize':
-            # /////////////// LSUN-R ///////////////
-            testset = dset.ImageFolder(root="./data/LSUN_resize",
-                                        transform=transform_test)
-
-        if ds == 'iSUN':
-            # /////////////// iSUN ///////////////
-            testset = dset.ImageFolder(root="./data/iSUN",
-                                        transform=transform_test)
-
-        if ds == 'LSUN_C':
-            # /////////////// LSUN-C ///////////////
-            testset = dset.ImageFolder(root="./data/LSUN_C",
-                                        transform=transform_test)
-
-        # /////////////// Mean Results ///////////////
-
-        # testset = trainset
-        v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
-                                                   shuffle=False, num_workers=workers, persistent_workers=True)
-
-        key_to_class = {k: v for k, v in enumerate(trainset.classes)}
 
     n_classes = len(key_to_class.keys())
     if name == 'bayes':
@@ -164,9 +61,9 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
     elif name == 'dropout':
         model = DropoutModel(n_classes=n_classes, model_name=model_name)
     elif name == 'vos':
-        model = VOSModel(n_classes=n_classes, model_name=model_name)
+        model = VOSModel(n_classes=n_classes, model_name=model_name, vos_multivariate_dim=128)
 
-    path = os.path.join(data, model_name + "_" + name + "_100.pt")
+    path = os.path.join(data, model_name + "_" + name + "_0.02_200.pt")
 
     model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
@@ -193,8 +90,13 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
     hist = []
     oods = []
     gss_oods = []
+    length = len(v_dataloader) if len(v_dataloader) < max_iter / batch_size else max_iter // batch_size
+
     with torch.no_grad():
-        tqd_e = tqdm(enumerate(v_dataloader, 0), total=len(v_dataloader))
+        if ds == 'cifar':
+            tqd_e = tqdm(enumerate(v_dataloader, 0), total=length)  # len(v_dataloader))
+        else:
+            tqd_e = enumerate(v_dataloader, 0)
         fig, axes = plt.subplots(2, 1, figsize=(5, 7), gridspec_kw={'height_ratios': [3, 1]})
         for i, data in tqd_e:
             if ds == 'ships':
@@ -222,8 +124,9 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
             accuracy = torch.cat(acc, dim=0).mean().cpu()
             accuracy_u = torch.cat(acc_u, dim=0).mean().cpu()
             accuracy_l = torch.cat(acc_l, dim=0).mean().cpu()
-            tqd_e.set_description(
-                f'runn acc = {accuracy:.3f}, runn acc_u = {accuracy_u:.3f}, runn acc_l = {accuracy_l:.3f}')
+            if ds == 'cifar':
+                tqd_e.set_description(
+                    f'runn acc = {accuracy:.3f}, runn acc_u = {accuracy_u:.3f}, runn acc_l = {accuracy_l:.3f}')
 
             all_predictions = obj['preds']
             t_pred.append(all_predictions.cpu())
@@ -232,10 +135,19 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
 
             img, lbl = show_epoch
             img = unorm(img)
-            tp = torch.stack([norms[xx].mean.cpu() for xx in predicted.cpu().numpy()]).cuda()
-            oods.append((obj['lse_m'] - (obj['lse_s']/obj['lse_m'])*tp).cpu().numpy())
+            # tp = torch.stack([norms[xx].mean.cpu() for xx in predicted.cpu().numpy()]).cuda()
+            # dd = (obj['o'].mean(0).max(axis=1)[0]).cpu().numpy()
+            # dd = torch.softmax(obj['o'].mean(0), 1).max(axis=1)[0].cpu().numpy()
+            # dd = obj['mean'].max(axis=1)[0].cpu().numpy()
+            dd = obj['lse_m'].cpu().numpy()
+            oods.append(dd)  # - (obj['lse_s'] / obj['lse_m']) * tp).cpu().numpy())
             v = obj['lrs'].mean(0)[:, -1].cpu().numpy()
             gss_oods.append(-v)
+
+            if np.concatenate(oods, 0).shape[0] >= max_iter:
+                fig.clf()
+                return np.concatenate(oods, 0), np.concatenate(gss_oods, 0)
+
             key_to_class[10] = 'unsure'
             for elem in range(len(obj["mean"])):
                 if name == 'vos':
@@ -245,11 +157,12 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
                     # lr_s2 = torch.softmax(lr_c[:, :-1], 1).mean(0)
                     # 95% confidence interval 2.5% are out of distribution since we only look at left tail
                     cls = np.argmax(lr_s.cpu().numpy())
+                    # ood_m = lr_s[cls]
                     # cls2 = np.argmax(lr_s2.detach().cpu().numpy())
                     conf_class = torch.tensor(0.0).cuda()
                     if cls != 10:
                         conf_class = norms_scaled[cls].cdf(ood_m)
-                    #gss_oods.append(conf_class.cpu().numpy())
+                    # gss_oods.append(conf_class.cpu().numpy())
                     dlrs = lr_s.detach().cpu().numpy()
                     pred_cert.append((dlrs,
                                       conf_class.detach().cpu().numpy()))
@@ -264,7 +177,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
                         cls_hist[cls] = [ood_m.cpu().numpy()]
                     hist.append(ood_m.cpu().numpy())
 
-                if conf_class < 1.190:# and cls != 10:  # and lbl[elem] == cls:
+                if conf_class < 1.190:  # and cls != 10:  # and lbl[elem] == cls:
                     continue
                 torch_pred = obj['lr_soft'][:, elem]
                 pred_ent = met.predictive_entropy(torch_pred)
@@ -370,7 +283,6 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
             # plt.savefig(f'paper/kde_fit_cls_{id_to_cls[k]}.png')  # plt.show()
         # {'norm': 0.04044779132076963, 'cauchy': 0.10192547940873295, 'lognorm': 0.04017927570199646}
 
-
         # plot roc
 
         ps, gg, tlbl = zip(*pred_soft)
@@ -435,13 +347,13 @@ def run_net(root_dir, name='', ds='cifar', n_samp=25, max_iter=2000):
     m1 = np.array(m1)
     if ds == "cifar10":
         print(f'accuracy: {accuracy:.4f}')
-        show_performance_fpr(m1, m2)
+        show_performance_fpr(-m2, -m1)
         print(f's fpr@95: {fpr_tpr(m1, m2):.3f}')
         print(f'v fpr@95: {fpr_tpr(jp1, jp2):.3f}')
         v = (tpr_r >= 0.95).astype(float).nonzero()[0][0]
         print(f'@95% tpr: {tpr_r[v]}, fpr: {fpr_r[v]}, thresh: {thresh_r[v]}')
 
-    return np.concatenate(oods, 0), np.concatenate(gss_oods,0)
+    return np.concatenate(oods, 0), np.concatenate(gss_oods, 0)
 
 
 # wrong_score.mean()
@@ -604,32 +516,188 @@ def draw_ftpr(i, elem, elem_s):
     plt.show()
 
 
-if __name__ == "__main__":
+def get_dataset(path, ds):
+    val_dir = os.path.join(path, 'val_set')
+    data = r'Q:\git\SLC\ckpts'
+    image_size = 32
+    batch_size = 128
+    workers = 4
+    model_name = "wrn"
+    norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in train_norms.items()}
+
+    if ds == 'ships':
+        cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
+        gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
+        rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]),
+                                     p=0.2)
+        rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
+                                      p=0.2)
+        val_set = ShippingLabClassification(root_dir=val_dir,
+                                            transform=transforms.Compose([
+                                                Letterbox((image_size, image_size)),
+                                                transforms.ToTensor(),
+                                                transforms.RandomHorizontalFlip(),
+                                                cj, gauss, rez, rez2
+                                            ]))
+
+        val_set = ShippingLabClassification(root_dir=val_dir,
+                                            transform=transforms.Compose([
+                                                Letterbox((image_size, image_size)),
+                                                transforms.ToTensor()
+                                            ]))
+
+        v_dataloader = DataLoader(val_set, batch_size=batch_size,
+                                  shuffle=True, num_workers=workers)
+        key_to_class = {b: a for a, b in val_set.classes.items()}
+        unorm = None
+    else:
+        mean = np.array([x / 255 for x in [125.3, 123.0, 113.9]])
+        std = np.array([x / 255 for x in [63.0, 62.1, 66.7]])
+
+        transform_train = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean.tolist(), std.tolist()),
+        ])
+
+        transform_test = transforms.Compose([
+            # transforms.Resize((image_size, image_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean.tolist(), std.tolist()),
+        ])
+
+        transform_test_cc = transforms.Compose([
+            transforms.Resize(image_size),
+            transforms.CenterCrop(image_size),
+            transforms.ToTensor(),
+            transforms.Normalize(mean.tolist(), std.tolist()),
+        ])
+        unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
+        trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+                                                download=False, transform=transform_train)
+        # v_dataloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,
+        #                                            shuffle=True, num_workers=workers, persistent_workers=True)
+
+        testset = torchvision.datasets.CIFAR10(root='./data', train=False,
+                                               download=False, transform=transform_test)
+        if ds == 'SVHN':
+            testset = svhn.SVHN(root='./data/svhn', split='test',
+                                download=True, transform=transforms.Compose([
+                                                        transforms.Resize(image_size),
+                                                        transforms.ToTensor(),
+                                                        transforms.Normalize(mean.tolist(), std.tolist()),
+                                                    ]))
+        if ds == 'dtd':
+            # /////////////// Textures ///////////////
+            testset = dset.ImageFolder(root="./data/dtd/images",
+                                       transform=transform_test_cc)
+        if ds == 'places365':
+            # /////////////// Places365 ///////////////
+            testset = dset.ImageFolder(root="./data/places365/",
+                                       transform=transform_test_cc)
+        if ds == 'LSUN_resize':
+            # /////////////// LSUN-R ///////////////
+            testset = dset.ImageFolder(root="./data/LSUN_resize",
+                                       transform=transform_test)
+
+        if ds == 'iSUN':
+            # /////////////// iSUN ///////////////
+            testset = dset.ImageFolder(root="./data/iSUN",
+                                       transform=transform_test)
+
+        if ds == 'LSUN_C':
+            # /////////////// LSUN-C ///////////////
+            testset = dset.ImageFolder(root="./data/LSUN_C",
+                                       transform=transform_test)
+
+        # /////////////// Mean Results ///////////////
+
+        # testset = trainset
+        v_dataloader = torch.utils.data.DataLoader(testset, batch_size=batch_size,
+                                                   shuffle=True, num_workers=workers, persistent_workers=True,
+                                                   pin_memory=True)
+
+        key_to_class = {k: v for k, v in enumerate(trainset.classes)}
+
+    return v_dataloader, key_to_class, unorm
+
+
+def main():
     path = r'Q:\uncert_data\data_cifar_cleaned'
     cps = []
-    test = ["LSUN_C", 'SVHN', 'dtd', "iSUN", "LSUN_resize","places365"]
-    #test = ["iSUN", "LSUN_resize"]
+    runs = 10
+    test = ['dtd', "places365", "LSUN_C", 'SVHN', "iSUN", "LSUN_resize"]
+    # test = ["iSUN", "LSUN_resize"]
     # try:
     #     iid1 = np.fromfile("iid1", dtype=np.float32)
     #     iid2 = np.fromfile("iid2", dtype=np.float32)
     # except FileNotFoundError:
-    iid1, iid2 = run_net(path, name='vos', ds='cifar10', max_iter=10000)
-    iid1.tofile("iid1")
-    iid2.tofile("iid2")
-    vos, gss = [], []
-    for dataset in test:
-        ood1, ood2 = run_net(path, name='vos', ds=dataset)
-        vos.append(fpr_tpr(iid1, ood1))
-        gss.append(fpr_tpr(iid2, ood2))
-        #gss.append(fpr_tpr(iid2, ood2))
-        print(f'dsvos: {vos[-1]}')
-        print(f'gauss: {gss[-1]}')
-        print(f'mean: {ood1.mean()}')
+    v_dataloader, key_to_class, unorm = get_dataset(path, 'cifar10')
+    iid1, iid2 = run_net(path, name='vos', ds='cifar10',
+                         v_dataloader=v_dataloader, key_to_class=key_to_class, unorm=unorm)
+    # iid1.tofile("iid1")
+    # iid2.tofile("iid2")
+    vos_dict = {}
+    for ds in test:
+        vos, gss, mss = [], [], []
+        oods = []
+        v_dataloader, key_to_class, unorm = get_dataset(path, ds)
+        fig, axes = plt.subplots(1, 1, figsize=(5, 5))
+        for _ in tqdm(range(runs)):
+            tempDict = dict(key_to_class)
+            ood1, ood2 = run_net(path, name='vos', ds=ds, v_dataloader=v_dataloader, key_to_class=tempDict,
+                                 max_iter=2000, unorm=unorm)
+            vos.append(fpr_tpr(iid1, ood1))
+            gss.append(tpr_fpr(iid1, ood1))
+            mss.append((get_measures(iid1, ood1), get_measures(-ood1, -iid1)))
 
-    for x in range(len(vos)):
-        print(f"-----{test[x]}-----")
-        print(f'dsvos: {vos[x]}')
-        print(f'gauss: {gss[x]}')
-    print(f'mean ds vos: {np.array(vos).mean()}')
-    print(f'mean ds gss: {np.array(gss).mean()}')
+            oods.append(ood1)
+            y, x,_=plt.hist(ood1, bins=100, color='b', alpha=0.5, density=True)
+            plt.hist(iid1, bins=100, color='g', alpha=0.5, density=True)
+            plt.vlines(np.quantile(ood1, 0.95, axis=0), 0, y.max(), linestyles='dashed', colors='b', linewidth=2,
+                       label='ood 95%')
+            plt.vlines(np.quantile(iid1, 0.05, axis=0), 0, y.max(), linestyles='dashed', colors='g', linewidth=2,
+                       label='iid 95%')
+            plt.show()
+
+        for x in mss:
+            print('----')
+            print(x[0])
+            print('----')
+            print(x[1])
+
+        noods = np.array(oods).reshape(-1)
+        y, x, _ = plt.hist(noods, bins=100, color='b', alpha=0.5, density=True)
+        plt.hist(iid1, bins=100, color='g', alpha=0.5, density=True)
+        plt.vlines(np.quantile(noods, 0.95, axis=0), 0, y.max(), linestyles='dashed', colors='b', linewidth=2,
+                   label='ood 95%')
+        plt.vlines(np.quantile(iid1, 0.05, axis=0), 0, y.max(), linestyles='dashed', colors='g', linewidth=2,
+                   label='iid 95%')
+        plt.show()
+        # gss.append(fpr_tpr(iid2, ood2))
+        vos = np.array(vos) * 100
+        gss = np.array(gss) * 100
+        vos_dict[ds] = (vos, gss)
+        oods = np.array(oods)
+        print(f'fpr95_ood_pos: {vos.mean():.3f}±{vos.std():.2f}')
+        print(f'fpr95_iid_pos: {gss.mean():.3f}±{gss.std():.2f}')
+        print(f'mean: {oods.mean()}')
+
+    vs, gs = [], []
+
+    for x in test:
+        print(f"-----{x}-----")
+        v = vos_dict[x][0]
+        g = vos_dict[x][1]
+        print(f'fpr95_ood_pos: {v.mean():.3f}±{v.std():.2f}')
+        print(f'fpr95_iid_pos: {g.mean():.3f}±{g.std():.2f}')
+        vs.append(v)
+        gs.append(g)
+    print(f'mean ds vos: {np.array(vs).mean():.3f}±{np.array(vs).std():.2f}')
+    print(f'mean ds gss: {np.array(gs).mean():.3f}±{np.array(gs).std():.2f}')
     print('done')
+
+
+if __name__ == "__main__":
+    main()

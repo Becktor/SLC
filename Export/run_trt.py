@@ -78,7 +78,6 @@ def run():
     model_trt = TRTModule()
     model_trt.load_state_dict(torch.load(path[:-2]+'pth'))
     model_trt.eval().cuda()
-    model_trt(data)
     y = eval_samples_torch(torch_model, x)
     yt = eval_samples_torch(model_trt, x)
     val_dir = os.path.join(r'/mnt/ext/data/ds1_wo_f', 'val_set')
