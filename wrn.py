@@ -14,7 +14,7 @@ class SuperDropout(nn.Module):
         if self.training:
             return F.dropout(x, p=self.p, training=True)
         else:
-            return F.dropout(x, p=self.pt, training=True)
+            return F.dropout(x, p=self.pt, training=False)
 
 
 class BasicBlock(nn.Module):

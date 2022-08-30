@@ -310,7 +310,7 @@ class VOSModel(nn.Module):
         # )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        use_norm = True
+
         #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         # if use_norm:
         #     self.fc = NormedLinear(vos_multivariate_dim, n_classes)
@@ -347,6 +347,7 @@ class VOSModel(nn.Module):
         self.running_ood_samples = torch.zeros(500 * n_classes).cuda()
         self.ood_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.ood_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
+        use_norm = False
         if use_norm:
             self.loss_fn = LogitNormLoss(device='cuda', t=0.04)
         else:

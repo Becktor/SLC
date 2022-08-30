@@ -63,7 +63,7 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
     elif name == 'vos':
         model = VOSModel(n_classes=n_classes, model_name=model_name, vos_multivariate_dim=128)
 
-    path = os.path.join(data, model_name + "_" + name + "_0.02_200.pt")
+    path = os.path.join(data, model_name + "_" + name + "_0.024_200_t.pt")
 
     model_dict = torch.load(os.path.join(root_dir, path))
     model.load_state_dict(model_dict['model_state_dict'])
@@ -584,10 +584,10 @@ def get_dataset(path, ds):
         if ds == 'SVHN':
             testset = svhn.SVHN(root='./data/svhn', split='test',
                                 download=True, transform=transforms.Compose([
-                                                        transforms.Resize(image_size),
-                                                        transforms.ToTensor(),
-                                                        transforms.Normalize(mean.tolist(), std.tolist()),
-                                                    ]))
+                    transforms.Resize(image_size),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean.tolist(), std.tolist()),
+                ]))
         if ds == 'dtd':
             # /////////////// Textures ///////////////
             testset = dset.ImageFolder(root="./data/dtd/images",
@@ -639,8 +639,11 @@ def main():
     # iid1.tofile("iid1")
     # iid2.tofile("iid2")
     vos_dict = {}
+    all_aurocs, all_auprs,o_all_auprs = [], [], []
     for ds in test:
         vos, gss, mss = [], [], []
+        aurocs_o, auprs_o, fprs_o = [], [], []
+        aurocs_i, auprs_i, fprs_i = [], [], []
         oods = []
         v_dataloader, key_to_class, unorm = get_dataset(path, ds)
         fig, axes = plt.subplots(1, 1, figsize=(5, 5))
@@ -650,22 +653,24 @@ def main():
                                  max_iter=2000, unorm=unorm)
             vos.append(fpr_tpr(iid1, ood1))
             gss.append(tpr_fpr(iid1, ood1))
-            mss.append((get_measures(iid1, ood1), get_measures(-ood1, -iid1)))
+            o_m = get_measures(-ood1, -iid1)
+            i_m = get_measures(iid1, ood1)
+
+            aurocs_o.append(o_m[0])
+            auprs_o.append(o_m[1])
+            fprs_o.append(o_m[2])
+            aurocs_i.append(i_m[0])
+            auprs_i.append(i_m[1])
+            fprs_i.append(i_m[2])
 
             oods.append(ood1)
-            y, x,_=plt.hist(ood1, bins=100, color='b', alpha=0.5, density=True)
+            y, x, _ = plt.hist(ood1, bins=100, color='b', alpha=0.5, density=True)
             plt.hist(iid1, bins=100, color='g', alpha=0.5, density=True)
             plt.vlines(np.quantile(ood1, 0.95, axis=0), 0, y.max(), linestyles='dashed', colors='b', linewidth=2,
                        label='ood 95%')
             plt.vlines(np.quantile(iid1, 0.05, axis=0), 0, y.max(), linestyles='dashed', colors='g', linewidth=2,
                        label='iid 95%')
             plt.show()
-
-        for x in mss:
-            print('----')
-            print(x[0])
-            print('----')
-            print(x[1])
 
         noods = np.array(oods).reshape(-1)
         y, x, _ = plt.hist(noods, bins=100, color='b', alpha=0.5, density=True)
@@ -676,26 +681,41 @@ def main():
                    label='iid 95%')
         plt.show()
         # gss.append(fpr_tpr(iid2, ood2))
-        vos = np.array(vos) * 100
-        gss = np.array(gss) * 100
-        vos_dict[ds] = (vos, gss)
+        ood_fpr = np.array(fprs_o) * 100
+        ood_auroc = np.array(aurocs_o) * 100
+        ood_aupr = np.array(auprs_o) * 100
+        iid_fpr = np.array(fprs_i) * 100
+        iid_auroc = np.array(aurocs_i) * 100
+        iid_aupr = np.array(auprs_i) * 100
+        vos_dict[ds] = (ood_fpr, iid_fpr)
+        all_aurocs.append(iid_auroc)
+        o_all_auprs.append(ood_aupr)
+        all_auprs.append(iid_aupr)
         oods = np.array(oods)
-        print(f'fpr95_ood_pos: {vos.mean():.3f}±{vos.std():.2f}')
-        print(f'fpr95_iid_pos: {gss.mean():.3f}±{gss.std():.2f}')
+        print(f'ood is pos, fpr95: {ood_fpr.mean():.2f}±{ood_fpr.std():.2f}, '
+              f'auroc: {ood_auroc.mean():.2f}±{ood_auroc.std():.2f}, '
+              f'aupr: {ood_aupr.mean():.2f}±{ood_aupr.std():.2f}')
+        print(f'iid is pos, fpr95: {iid_fpr.mean():.2f}±{iid_fpr.std():.2f}, '
+              f'auroc: {iid_auroc.mean():.2f}±{iid_auroc.std():.2f}, '
+              f'aupr: {iid_aupr.mean():.2f}±{iid_aupr.std():.2f}')
         print(f'mean: {oods.mean()}')
 
-    vs, gs = [], []
+    oods_fprs, iids_fprs = [], []
 
     for x in test:
         print(f"-----{x}-----")
-        v = vos_dict[x][0]
-        g = vos_dict[x][1]
-        print(f'fpr95_ood_pos: {v.mean():.3f}±{v.std():.2f}')
-        print(f'fpr95_iid_pos: {g.mean():.3f}±{g.std():.2f}')
-        vs.append(v)
-        gs.append(g)
-    print(f'mean ds vos: {np.array(vs).mean():.3f}±{np.array(vs).std():.2f}')
-    print(f'mean ds gss: {np.array(gs).mean():.3f}±{np.array(gs).std():.2f}')
+        ood_fpr = vos_dict[x][0]
+        iid_fpr = vos_dict[x][1]
+        print(f'fpr95_ood_pos: {ood_fpr.mean():.3f}±{ood_fpr.std():.2f}')
+        print(f'fpr95_iid_pos: {iid_fpr.mean():.3f}±{iid_fpr.std():.2f}')
+        oods_fprs.append(ood_fpr)
+        iids_fprs.append(iid_fpr)
+    print(f'mean ds iid_pos: {np.array(iids_fprs).mean():.2f}')
+    print(f'mean auroc: {np.array(all_aurocs).mean():.2f}')
+    print(f'mean aupr: {np.array(all_auprs).mean():.2f}')
+    print(f'mean ds ood_pos: {np.array(oods_fprs).mean():.2f}')
+    print(f'mean auroc: {np.array(all_aurocs).mean():.2f}')
+    print(f'mean aupr: {np.array(o_all_auprs).mean():.2f}')
     print('done')
 
 

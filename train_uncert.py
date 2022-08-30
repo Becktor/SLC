@@ -18,7 +18,7 @@ torch.manual_seed(0)
 from itertools import cycle
 
 
-def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vos=0.1):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
         ds = 'cifar10'
         torch.cuda.empty_cache()
@@ -40,6 +40,7 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
                 "method": net_method,
                 "vos_multivariate_dim": 128,
                 "ds": ds,
+                "vos":vos,
             },
         )
         start_vos = 40
@@ -51,7 +52,7 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
 
         print(torch.cuda.get_device_name(0))
         workers = 4
-        if ds == 'shippinglab':
+        if ds == 'ships':
             cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
             gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
             rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]),
@@ -126,10 +127,9 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
             loader_len = len(t_dataloader)
             model_param = [x for x in list(model.parameters()) if x.requires_grad]
             #opt = torch.optim.AdamW(model_param, lr=wandb.config.learning_rate)
-            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=0.0005)#, nesterov=True)
-            #scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
-
-            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [80, 140], gamma=0.1)
+            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=0.0005, nesterov=True)
+            scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
+            #scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [80, 140], gamma=0.1)
 
             number_dict = {}
             sample_number = 1000
@@ -156,14 +156,14 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
         for epoch in range(epochs):
             model.train()
             net_l, meta_losses_clean, m_cross, m_reg, vos_l, kl_f_l = [], [], [], [], [], []
-            if ds == 'shippinglab':
+            if ds == 'ships':
                 tqdm_dl = tqdm(range(200))
                 generator = cycle(iter(t_dataloader))
             if ds == 'cifar10':
                 tqdm_dl = tqdm(t_dataloader)
             for i, data in enumerate(tqdm_dl, 0):
                 # Samples the batch
-                if ds == 'shippinglab':
+                if ds == 'ships':
                     imgs, lbls, idxs, paths = next(generator)
                 if ds == 'cifar10':
                     imgs, lbls = data
@@ -200,8 +200,9 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
                     cost = model.loss(output, lbls)
                 # with torch.cuda.amp.autocast():
                 cost.backward()
-
                 opt.step()
+                # forcosine
+                scheduler.step()
                 #if epoch < epochs-20:
 
                 net_l.append(cost.cpu().detach())
@@ -225,12 +226,13 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
 
             net_losses.append(np.mean(net_l))
             acc, acc_u, acc_l = [], [], []
-            scheduler.step()
+            # for stepwise
+            #scheduler.step()
             if (1 + epoch) % 2 == 0:# and epoch > 6:
                 with torch.no_grad():
                     pbar = tqdm(enumerate(v_dataloader, 0))
                     for i, data in pbar:
-                        if ds == 'shippinglab':
+                        if ds == 'ships':
                             t_imgs, t_lbls, _, _ = data
                         if ds == 'cifar10':
                             t_imgs, t_lbls = data
@@ -311,7 +313,7 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
 
 if __name__ == "__main__":
     path = r'Q:\uncert_data\data_cifar_cleaned'
-    r = [0.02, 0.025, 0.03, 0.035]
+    r = [0.024]
 
     for v in r:
         name = 'vos'
