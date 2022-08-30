@@ -142,7 +142,7 @@ def run_net(root_dir, name='', ds='cifar', n_samp=10, ds_cmp='cifar'):
             transform_test = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize(mean.tolist(), std.tolist()),
-                letterbox((image_size, image_size), color=mean)])
+                Letterbox((image_size, image_size), color=mean)])
             unorm = transforms.Normalize((-mean / std).tolist(), (1.0 / std).tolist())
 
         if ds_cmp == 'cifar':

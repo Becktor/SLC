@@ -82,12 +82,12 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, ds
                                                     letterbox((image_size, image_size), color=mean)
                                                 ]))
 
+            val_trans = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean.tolist(), std.tolist()),
+                letterbox((image_size, image_size), color=mean)])
             val_set = ShippingLabClassification(root_dir=val_dir,
-                                                transform=transforms.Compose([
-                                                    transforms.ToTensor(),
-                                                    transforms.Normalize(mean.tolist(), std.tolist()),
-                                                    letterbox((image_size, image_size), color=mean)
-                                                ]))
+                                                transform=val_trans)
 
             key_to_class = dict((v, k) for k, v in dataset.classes.items())
             t_dataloader = DataLoader(dataset, batch_size=batch_size,
