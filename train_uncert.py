@@ -53,24 +53,31 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
         print(torch.cuda.get_device_name(0))
         workers = 4
         if ds == 'ships':
+
+            image_size = 32
+            mean = np.array([x / 255 for x in [115.8, 115.0, 116.0]])
+            std = np.array([x / 255 for x in [52.2, 51.0, 55.6]])
+
             cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
             gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-            rez = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(64), transforms.Resize(image_size)]),
-                                         p=0.2)
-            rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(32), transforms.Resize(image_size)]),
+            crop = transforms.RandomCrop(image_size, padding=4),
+            rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(16), transforms.Resize(image_size)]),
                                           p=0.2)
+
             dataset = ShippingLabClassification(root_dir=train_dir,
                                                 transform=transforms.Compose([
-                                                    Letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
+                                                    transforms.Resize(image_size),
+                                                    transforms.Normalize(mean.tolist(), std.tolist()),
                                                     transforms.RandomHorizontalFlip(),
-                                                    cj, gauss, rez, rez2
+                                                    cj, gauss, rez2, crop
                                                 ]))
 
             val_set = ShippingLabClassification(root_dir=val_dir,
                                                 transform=transforms.Compose([
-                                                    Letterbox((image_size, image_size)),
                                                     transforms.ToTensor(),
+                                                    transforms.Resize(image_size),
+                                                    transforms.CenterCrop(image_size),
                                                 ]))
 
             key_to_class = dict((v, k) for k, v in dataset.classes.items())
