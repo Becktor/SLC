@@ -20,7 +20,7 @@ from itertools import cycle
 
 def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
-        ds = 'cifar10'
+        ds = 'ships'
         torch.cuda.empty_cache()
         val_dir = os.path.join(root_dir, 'val_set')
         train_dir = os.path.join(root_dir, 'train_set')
@@ -60,24 +60,23 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
 
             cj = transforms.RandomApply(torch.nn.ModuleList([transforms.ColorJitter()]), p=0.5)
             gauss = transforms.RandomApply(torch.nn.ModuleList([transforms.GaussianBlur(3)]), p=0.25)
-            crop = transforms.RandomCrop(image_size, padding=4),
+            crop = transforms.RandomCrop(image_size, padding=4)
             rez2 = transforms.RandomApply(torch.nn.ModuleList([transforms.Resize(16), transforms.Resize(image_size)]),
                                           p=0.2)
 
             dataset = ShippingLabClassification(root_dir=train_dir,
                                                 transform=transforms.Compose([
-                                                    transforms.ToTensor(),
                                                     transforms.Resize(image_size),
-                                                    transforms.Normalize(mean.tolist(), std.tolist()),
                                                     transforms.RandomHorizontalFlip(),
-                                                    cj, gauss, rez2, crop
+                                                    cj, gauss, rez2, crop, transforms.ToTensor(),
+                                                    transforms.Normalize(mean.tolist(), std.tolist()),
                                                 ]))
 
             val_set = ShippingLabClassification(root_dir=val_dir,
                                                 transform=transforms.Compose([
-                                                    transforms.ToTensor(),
                                                     transforms.Resize(image_size),
                                                     transforms.CenterCrop(image_size),
+                                                    transforms.ToTensor(),
                                                 ]))
 
             key_to_class = dict((v, k) for k, v in dataset.classes.items())
@@ -319,7 +318,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
 
 
 if __name__ == "__main__":
-    path = r'Q:\uncert_data\data_cifar_cleaned'
+    path = r'C:\Users\jobe\git\SLC\data\ships'
     r = [0.024]
 
     for v in r:
