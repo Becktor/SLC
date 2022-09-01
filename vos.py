@@ -77,11 +77,11 @@ def vos_update(model, vos_dict):
             # lbl2 = torch.cat((vos_dict['target'], torch.ones(len(ood_samples)).cuda() * vos_dict["num_classes"]), -1)
 
             #crit 1
-            #criterion = torch.nn.CrossEntropyLoss()
+            criterion = torch.nn.CrossEntropyLoss()
             #criterion = torch.nn.BCEWithLogitsLoss()
             #out_1 = torch.nn.LeakyReLU(inplace=True)(input_for_lr)
-            #out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
-            #lr_reg_loss = criterion(input_for_lr, labels_for_lr.float())
+            out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
+            lr_reg_loss = criterion(out_1, labels_for_lr.long())
 
             #out_2=model.logistic_regression((gg-input_for_lr).view(-1, 1))
 
@@ -97,16 +97,16 @@ def vos_update(model, vos_dict):
             #weight_crit2[-1] = 1/128
             #criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
 
-            clamped_inp = torch.clamp(input_for_lr, min=0.00001)
-            shifted_means = torch.log(run_means.mean() / clamped_inp)
+            #clamped_inp = torch.clamp(input_for_lr, min=0.00001)
+            #shifted_means = torch.log(run_means.mean() / clamped_inp)
             # #xe = shifted_means * model.ood_mean
             # #out_j = xe.unsqueeze(1)
             # #output = torch.cat((input_for_lr_2, out_j), 1)
             # #xe_outlier = criterion2(output, lbl2.long())
-            inv = (~labels_for_lr.bool()).float()
+            #inv = (~labels_for_lr.bool()).float()
             # #out_1 = model.logistic_regression(shifted_means.view(-1, 1))
-            criterion = torch.nn.BCEWithLogitsLoss()
-            lr_reg_loss = criterion(shifted_means, inv)
+            #criterion = torch.nn.BCEWithLogitsLoss()
+            #lr_reg_loss = criterion(shifted_means, inv)
 
     else:
         target_numpy = vos_dict['target'].cpu().data.numpy()

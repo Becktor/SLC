@@ -40,7 +40,7 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
                 "method": net_method,
                 "vos_multivariate_dim": 128,
                 "ds": ds,
-                "vos":vos,
+                "vos": vos,
             },
         )
         start_vos = 40
@@ -319,7 +319,7 @@ def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vo
 
 if __name__ == "__main__":
     path = r'C:\Users\jobe\git\SLC\data\ships'
-    r = [0.024]
+    r = [0.1]
 
     for v in r:
         name = 'vos'
