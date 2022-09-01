@@ -381,7 +381,7 @@ class VOSModel(nn.Module):
 
         value.exp().sum(dim, keepdim).log()
         """
-        return torch.logsumexp(value, dim=dim)
+        #return torch.logsumexp(value, dim=dim)
         if dim is not None:
             m, _ = torch.max(value, dim=dim, keepdim=True)
             value0 = value - m
