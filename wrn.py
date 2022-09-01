@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class SuperDropout(nn.Module):
-    def __init__(self, p=0.5, pt=0.1):
+    def __init__(self, p=0.5, pt=0.15):
         super().__init__()
         self.p = p
         self.pt = pt
@@ -14,7 +14,7 @@ class SuperDropout(nn.Module):
         if self.training:
             return F.dropout(x, p=self.p, training=True)
         else:
-            return F.dropout(x, p=self.pt, training=False)
+            return F.dropout(x, p=self.pt, training=True)
 
 
 class BasicBlock(nn.Module):
@@ -116,8 +116,8 @@ class WideResNet(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.relu(self.bn1(out))
-        out = self.super_drop(out)
         out = F.avg_pool2d(out, out.shape[-1])
+        out = self.super_drop(out)
         out = out.view(-1, self.nChannels)
         return self.fc(out), out
 

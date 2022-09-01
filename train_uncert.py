@@ -18,7 +18,7 @@ torch.manual_seed(0)
 from itertools import cycle
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vos=0.1):
+def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
         ds = 'cifar10'
         torch.cuda.empty_cache()
@@ -134,9 +134,9 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
             loader_len = len(t_dataloader)
             model_param = [x for x in list(model.parameters()) if x.requires_grad]
             #opt = torch.optim.AdamW(model_param, lr=wandb.config.learning_rate)
-            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=0.0005, nesterov=True)
-            scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
-            #scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [80, 140], gamma=0.1)
+            opt = torch.optim.SGD(model_param, lr=wandb.config.learning_rate, momentum=0.9, weight_decay=0.0005)#, nesterov=True)
+            #scheduler = CosineWarmupLR(opt, epochs, loader_len, warmup_epochs=1)#torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs*len(t_dataloader))
+            scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, [80, 140], gamma=0.1)
 
             number_dict = {}
             sample_number = 1000
@@ -209,7 +209,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
                 cost.backward()
                 opt.step()
                 # forcosine
-                scheduler.step()
+                #scheduler.step()
                 #if epoch < epochs-20:
 
                 net_l.append(cost.cpu().detach())
@@ -234,7 +234,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
             net_losses.append(np.mean(net_l))
             acc, acc_u, acc_l = [], [], []
             # for stepwise
-            #scheduler.step()
+            scheduler.step()
             if (1 + epoch) % 2 == 0:# and epoch > 6:
                 with torch.no_grad():
                     pbar = tqdm(enumerate(v_dataloader, 0))

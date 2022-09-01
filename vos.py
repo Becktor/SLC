@@ -77,10 +77,11 @@ def vos_update(model, vos_dict):
             # lbl2 = torch.cat((vos_dict['target'], torch.ones(len(ood_samples)).cuda() * vos_dict["num_classes"]), -1)
 
             #crit 1
-            # criterion = torch.nn.CrossEntropyLoss()
+            #criterion = torch.nn.CrossEntropyLoss()
+            #criterion = torch.nn.BCEWithLogitsLoss()
             #out_1 = torch.nn.LeakyReLU(inplace=True)(input_for_lr)
             #out_1 = model.logistic_regression(input_for_lr.view(-1, 1))
-            #lr_reg_loss = criterion(out_1, labels_for_lr.long())
+            #lr_reg_loss = criterion(input_for_lr, labels_for_lr.float())
 
             #out_2=model.logistic_regression((gg-input_for_lr).view(-1, 1))
 

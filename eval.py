@@ -48,7 +48,7 @@ train_norms = {3: (14.008406, 3.8698266), 8: (16.991377, 3.6263654), 0: (15.3700
                7: (15.685531, 3.6368687), 4: (15.913696, 3.8837087), 2: (15.373063, 4.195742)}
 
 
-def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None, n_samp=5, max_iter=1000000,
+def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None, n_samp=10, max_iter=1000000,
             unorm=None):
     data = r'Q:\git\SLC\ckpts'
     batch_size = 200
@@ -63,10 +63,21 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
     elif name == 'vos':
         model = VOSModel(n_classes=n_classes, model_name=model_name, vos_multivariate_dim=128)
 
+    #path = os.path.join(data, model_name + "_" + name + "_0.1_100_bl.pt")
     path = os.path.join(data, model_name + "_" + name + "_0.024_200_t.pt")
-
     model_dict = torch.load(os.path.join(root_dir, path))
-    model.load_state_dict(model_dict['model_state_dict'])
+
+    if False:
+        nd = {}
+        for k, v in model_dict.items():
+            if 'fc' not in k:
+                nd['model.' + k] = v
+            else:
+                nd[k] = v
+                nd['model.' + k] = v
+        model.load_state_dict(nd, strict=False)
+    else:
+        model.load_state_dict(model_dict['model_state_dict'])
 
     norms = {k: torch.distributions.Normal(v[0], v[1]) for k, v in enumerate(zip(model.vos_means, model.vos_stds))}
     norms_scaled = {k: torch.distributions.Normal(v[0], v[1]) for k, v in

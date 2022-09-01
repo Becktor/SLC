@@ -347,7 +347,7 @@ class VOSModel(nn.Module):
         self.running_ood_samples = torch.zeros(500 * n_classes).cuda()
         self.ood_mean = nn.Parameter(torch.tensor(0.0), requires_grad=False)
         self.ood_std = nn.Parameter(torch.tensor(1.0), requires_grad=False)
-        use_norm = False
+        use_norm = True
         if use_norm:
             self.loss_fn = LogitNormLoss(device='cuda', t=0.04)
         else:
@@ -382,17 +382,17 @@ class VOSModel(nn.Module):
         value.exp().sum(dim, keepdim).log()
         """
         return torch.logsumexp(value, dim=dim)
-        # if dim is not None:
-        #     m, _ = torch.max(value, dim=dim, keepdim=True)
-        #     value0 = value - m
-        #     if keepdim is False:
-        #         m = m.squeeze(dim)
-        #     return m + torch.log(torch.sum(
-        #         F.relu(self.weight_energy.weight) * torch.exp(value0), dim=dim, keepdim=keepdim))
-        # else:
-        #     m = torch.max(value)
-        #     sum_exp = torch.sum(torch.exp(value - m))
-        #     return m + torch.log(sum_exp)
+        if dim is not None:
+            m, _ = torch.max(value, dim=dim, keepdim=True)
+            value0 = value - m
+            if keepdim is False:
+                m = m.squeeze(dim)
+            return m + torch.log(torch.sum(
+                F.relu(self.weight_energy.weight) * torch.exp(value0), dim=dim, keepdim=keepdim))
+        else:
+            m = torch.max(value)
+            sum_exp = torch.sum(torch.exp(value - m))
+            return m + torch.log(sum_exp)
 
     def ood_pred(self, x):
         lse = self.log_sum_exp(x, dim=1)
