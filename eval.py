@@ -64,7 +64,7 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
         model = VOSModel(n_classes=n_classes, model_name=model_name, vos_multivariate_dim=128)
 
     #path = os.path.join(data, model_name + "_" + name + "_0.1_100_bl.pt")
-    path = os.path.join(data, model_name + "_" + name + "_0.024_200_t.pt")
+    path = os.path.join(data, model_name + "_" + name + "_0.024_200.t.pt")
     model_dict = torch.load(os.path.join(root_dir, path))
 
     if False:

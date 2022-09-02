@@ -18,9 +18,9 @@ torch.manual_seed(0)
 from itertools import cycle
 
 
-def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vos=0.1):
+def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
-        ds = 'ships'
+        ds = 'cifar10'
         torch.cuda.empty_cache()
         val_dir = os.path.join(root_dir, 'val_set')
         train_dir = os.path.join(root_dir, 'train_set')
