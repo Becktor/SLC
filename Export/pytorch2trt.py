@@ -11,10 +11,10 @@ model_name = "wrn"
 test = True
 
 if method == 'vos':
-    torch_model = VOSModel(n_classes=8, model_name=model_name)
+    torch_model = VOSModel(n_classes=2, model_name=model_name)
     name = 'vos'
 
-path = os.path.join(ckpts, model_name + "_" + name + "_100_ships.pt")
+path = os.path.join(ckpts, model_name + "_" + name + "_100_LWIR.pt")
 
 model_dict = torch.load(path)
 torch_model.load_state_dict(model_dict['model_state_dict'])

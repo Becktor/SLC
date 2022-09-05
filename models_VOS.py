@@ -103,15 +103,15 @@ class VOSModel(nn.Module):
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.mcmc_layer = nn.Sequential(
-            SuperDropout(drop_rate),
-            nn.Linear(in_channels, out_channels, bias=False),
-            nn.ReLU(inplace=True),
-            SuperDropout(drop_rate),
-        )
+        # self.mcmc_layer = nn.Sequential(
+        #     SuperDropout(drop_rate),
+        #     nn.Linear(in_channels, out_channels, bias=False),
+        #     nn.ReLU(inplace=True),
+        #     SuperDropout(drop_rate),
+        # )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
+        #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         self.fc = torch.nn.Linear(vos_multivariate_dim, n_classes)
         self.weight_energy = torch.nn.Linear(n_classes, 1)
         torch.nn.init.uniform_(self.weight_energy.weight)
@@ -193,8 +193,7 @@ class VOSModel(nn.Module):
     def forward_step(self, inp):
         x = self.model.get_features(inp)
         x = self.global_pool(x)
-        x = x.view(x.size(0), -1)
-        output = self.mcmc_layer(x)
+        output = x.view(x.size(0), -1)
         pred = self.fc(output)
         return pred, output
 
