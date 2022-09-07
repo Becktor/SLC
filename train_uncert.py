@@ -18,7 +18,7 @@ torch.manual_seed(0)
 from itertools import cycle
 
 
-def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vos=0.1):
+def run_net(root_dir, ra, epochs=200, net_method='', lr=1e-3, batch_size=128, vos=0.1):
     try:
         ds = 'cifar10'
         torch.cuda.empty_cache()
@@ -40,10 +40,10 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
                 "method": net_method,
                 "vos_multivariate_dim": 128,
                 "ds": ds,
-                "vos":vos,
+                "vos": vos,
             },
         )
-        start_vos = 40
+        start_vos = 75
         wandb.run.name = wandb.config.method
         model_name = wandb.config.model_name
         # model = VOSModel(n_classes=8, model_name=model_name)
@@ -319,7 +319,7 @@ def run_net(root_dir, ra, epochs=100, net_method='', lr=1e-3, batch_size=128, vo
 
 if __name__ == "__main__":
     path = r'C:\Users\jobe\git\SLC\data\ships'
-    r = [0.024]
+    r = [0.025, 0.03, 0.035]#, 0.026, 0.022]
 
     for v in r:
         name = 'vos'

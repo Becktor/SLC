@@ -301,7 +301,7 @@ class VOSModel(nn.Module):
             #out_channels = 128
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
-        # self.global_pool = nn.AdaptiveAvgPool2d(1)
+        self.global_pool = nn.AdaptiveAvgPool2d(1)
         # self.mcmc_layer = nn.Sequential(
         #     SuperDropout(drop_rate),
         #     nn.Linear(in_channels, vos_multivariate_dim),
@@ -310,7 +310,7 @@ class VOSModel(nn.Module):
         # )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-
+        self.drop = SuperDropout(0.2)
         #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         # if use_norm:
         #     self.fc = NormedLinear(vos_multivariate_dim, n_classes)
@@ -408,10 +408,12 @@ class VOSModel(nn.Module):
         return output
 
     def forward_step(self, inp):
-        _, output = self.model.forward_virtual(inp)
-        # x = self.model.get_features(inp)
-        # x = self.global_pool(x)
-        # x = x.view(x.size(0), -1)
+        #_, x = self.model.forward_virtual(inp)
+        x = self.model.get_features(inp)
+        #x = self.drop(x)
+        x = self.global_pool(x)
+        output = x.view(x.size(0), -1)
+        output= self.drop(output)
         # output = self.mcmc_layer(x)
         #x = self.to_multivariate_variables(x)
         #output = nn.ReLU(inplace=True)(x)
