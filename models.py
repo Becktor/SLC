@@ -306,12 +306,12 @@ class VOSModel(nn.Module):
             SuperDropout(drop_rate),
             nn.Linear(in_channels, vos_multivariate_dim),
             nn.ReLU(inplace=True),
-            SuperDropout(drop_rate),
+            #SuperDropout(drop_rate),
         )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
         self.drop = SuperDropout(0.2)
-        self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
+        #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         # if use_norm:
         #     self.fc = NormedLinear(vos_multivariate_dim, n_classes)
         # else:
@@ -414,9 +414,9 @@ class VOSModel(nn.Module):
         x = self.global_pool(x)
         x = x.view(x.size(0), -1)
         #output = self.drop(output)
-        x = self.mcmc_layer(x)
-        x = self.to_multivariate_variables(x)
-        output = nn.ReLU(inplace=True)(x)
+        output = self.mcmc_layer(x)
+        #x = self.to_multivariate_variables(x)
+        #output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
         return pred, output
 
