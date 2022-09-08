@@ -5,7 +5,7 @@ import torch.nn.functional as F
 
 
 class SuperDropout(nn.Module):
-    def __init__(self, p=0.5, pt=0.05):
+    def __init__(self, p=0.5, pt=0.2):
         super().__init__()
         self.p = p
         self.pt = pt
