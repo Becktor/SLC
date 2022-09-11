@@ -81,9 +81,9 @@ class WideResNet(nn.Module):
         self.conv1 = nn.Conv2d(3, nChannels[0], kernel_size=3, stride=1,
                                padding=1, bias=False)
         # 1st block
-        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1, drop_rate)
+        self.block1 = NetworkBlock(n, nChannels[0], nChannels[1], block, 1, drop_rate, sd=True)
         # 2nd block
-        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2, drop_rate)
+        self.block2 = NetworkBlock(n, nChannels[1], nChannels[2], block, 2, drop_rate, sd=True)
         # 3rd block
         self.block3 = NetworkBlock(n, nChannels[2], nChannels[3], block, 2, drop_rate, sd=True)
         # global average pooling and classifier
@@ -109,8 +109,8 @@ class WideResNet(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.relu(self.bn1(out))
-        out = F.avg_pool2d(out, out.shape[-1])
         out = self.super_drop(out)
+        out = F.avg_pool2d(out, out.shape[-1])
         out = out.view(-1, self.nChannels)
         return self.fc(out)
 
@@ -120,8 +120,8 @@ class WideResNet(nn.Module):
         out = self.block2(out)
         out = self.block3(out)
         out = self.relu(self.bn1(out))
-        out = F.avg_pool2d(out, out.shape[-1])
         out = self.super_drop(out)
+        out = F.avg_pool2d(out, out.shape[-1])
         out = out.view(-1, self.nChannels)
         return self.fc(out), out
 

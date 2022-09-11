@@ -64,7 +64,7 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
         model = VOSModel(n_classes=n_classes, model_name=model_name, vos_multivariate_dim=128)
 
     #path = os.path.join(data, model_name + "_" + name + "_0.1_100_bl.pt")
-    path = os.path.join(data, model_name + "_" + name + "_0.02_200.pt")
+    path = os.path.join(data, model_name + "_" + name + "_0.022_200.pt")
     model_dict = torch.load(os.path.join(root_dir, path))
 
     if False:
@@ -100,9 +100,11 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
     cls_hist = {}
     hist = []
     oods = []
+    ael = []
+    save_cntr = 0
     gss_oods = []
     length = len(v_dataloader) if len(v_dataloader) < max_iter / batch_size else max_iter // batch_size
-
+    #key_to_class.pop(10)
     with torch.no_grad():
         if ds == 'cifar':
             tqd_e = tqdm(enumerate(v_dataloader, 0), total=length)  # len(v_dataloader))
@@ -151,6 +153,7 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
             # dd = torch.softmax(obj['o'].mean(0), 1).max(axis=1)[0].cpu().numpy()
             # dd = obj['mean'].max(axis=1)[0].cpu().numpy()
             dd = obj['lse_m'].cpu().numpy()
+            #dd = obj['lse'].median(0).values.cpu().numpy()
             oods.append(dd)  # - (obj['lse_s'] / obj['lse_m']) * tp).cpu().numpy())
             v = obj['lrs'].mean(0)[:, -1].cpu().numpy()
             gss_oods.append(-v)
@@ -159,20 +162,20 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
                 fig.clf()
                 return np.concatenate(oods, 0), np.concatenate(gss_oods, 0)
 
-            key_to_class[10] = 'unsure'
+           # key_to_class[10] = 'unsure'
             for elem in range(len(obj["mean"])):
                 if name == 'vos':
                     ood_m = obj['lse'][:, elem].mean()
                     # lr_c = #obj['lrs'][:, elem]
-                    lr_s = obj['lr_soft'][:, elem].mean(0)
+                    lr_s = obj['preds'][:, elem].mean(0)
                     # lr_s2 = torch.softmax(lr_c[:, :-1], 1).mean(0)
                     # 95% confidence interval 2.5% are out of distribution since we only look at left tail
                     cls = np.argmax(lr_s.cpu().numpy())
                     # ood_m = lr_s[cls]
                     # cls2 = np.argmax(lr_s2.detach().cpu().numpy())
-                    conf_class = torch.tensor(0.0).cuda()
-                    if cls != 10:
-                        conf_class = norms_scaled[cls].cdf(ood_m)
+                    conf_class = ood_m #norms_scaled[cls].cdf(ood_m) #lr_s[cls]#torch.tensor(0.0).cuda()
+                    #if cls != 10:
+                    #    conf_class = norms_scaled[cls].cdf(ood_m)
                     # gss_oods.append(conf_class.cpu().numpy())
                     dlrs = lr_s.detach().cpu().numpy()
                     pred_cert.append((dlrs,
@@ -188,24 +191,34 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
                         cls_hist[cls] = [ood_m.cpu().numpy()]
                     hist.append(ood_m.cpu().numpy())
 
-                if conf_class < 1.190:  # and cls != 10:  # and lbl[elem] == cls:
-                    continue
-                torch_pred = obj['lr_soft'][:, elem]
+
+                torch_pred = obj['preds'][:, elem]
                 pred_ent = met.predictive_entropy(torch_pred)
                 expected_ent = met.expected_entropy(torch_pred)
                 ee.append(expected_ent)
                 pe.append(pred_ent)
-                var_score = torch.sqrt(met.variance_score(torch_pred))
-                mi = met.BALD(torch_pred)
-                ekl = met.expected_kl(torch_pred)
+                var_score = torch.sqrt(met.variance_score(torch_pred)).cpu().numpy()*100
+                mi = met.BALD(torch_pred).cpu().numpy()*100
+                ekl = met.expected_kl(torch_pred).cpu().numpy()*100
+                ael.append((cls, lbl[elem].cpu().numpy(), var_score, mi, ekl))
+
+                if conf_class > 0.05 and mi < 2.0 or True:  # and cls != 10:  # and lbl[elem] == cls:
+                    continue
+                if save_cntr >= 1 and not(ds == 'cifar10' or ds == 'ships'):
+                    continue
+                save_cntr += 1
 
                 pr = torch_pred.cpu().detach().numpy()
                 ax1, ax2 = axes.ravel()
                 umg = img[elem].cpu().permute(1, 2, 0).numpy()
                 ax1.imshow((umg * 255).astype(np.uint8))
-                key_to_class[10] = 'unsure'
+                #key_to_class[10] = 'unsure'
                 n = key_to_class[cls]
-                l = key_to_class[int(lbl[elem])]
+                if ds != 'cifar10':
+                    l = ds
+                else:
+                    l = key_to_class[int(lbl[elem])]
+
                 if n == 'unsure':
                     cls = torch.topk(lr_s.cpu(), 2)[1][-1]
                     n = key_to_class[int(cls)]
@@ -221,8 +234,8 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
                                palette="Set2", inner="stick")  # , showmeans=True, meanline=True)
                 # ax2.violinplot(pr, showmeans=True)
                 # ax2.set_xticks(np.arange(1, len(ids) + 1), ids)
-                ax2.title.set_text(f'BP of outvec, σ: {var_score:.2f}, MI: {mi:.2f} ekl: {ekl:.2f}')
-                ax2.set_ylim([-0.1, 1.1])
+                ax2.title.set_text(f'var_s: {var_score:.2f}, MI: {mi:.2f} ekl: {ekl:.2f}')
+                #ax2.set_ylim([-0.1, 1.1])
                 # ax2.legend([n], bbox_to_anchor=(0.5, -.15))
                 for label in ax2.get_xticklabels():
                     label.set_rotation(45)
@@ -249,6 +262,19 @@ def run_net(root_dir, name='', ds='cifar', v_dataloader=None, key_to_class=None,
         #     label.set_ha('right')
         # plt.show()
     all_lbls = np.concatenate(total_lbl, 0)
+
+    a, b, c, d, e = zip(*ael)
+    a = np.array(a)
+    b = np.array(b)
+    c = np.array(c)
+    d = np.array(d)
+    e = np.array(e)
+
+    ab = a == b
+    print(c[ab].mean(), d[ab].mean(), e[ab].mean())
+    print(c[~ab].mean(), d[~ab].mean(), e[~ab].mean())
+
+
     if ds == 'cifar10':
         vals = np.array(hist)
         q25, q75 = np.percentile(vals, [25, 75])
@@ -677,10 +703,13 @@ def main():
             oods.append(ood1)
             y, x, _ = plt.hist(ood1, bins=100, color='b', alpha=0.5, density=True)
             plt.hist(iid1, bins=100, color='g', alpha=0.5, density=True)
-            plt.vlines(np.quantile(ood1, 0.95, axis=0), 0, y.max(), linestyles='dashed', colors='b', linewidth=2,
+            q1= np.quantile(ood1, 0.95, axis=0)
+            q2 = np.quantile(iid1, 0.05, axis=0)
+            plt.vlines(q1, 0, y.max(), linestyles='dashed', colors='b', linewidth=2,
                        label='ood 95%')
-            plt.vlines(np.quantile(iid1, 0.05, axis=0), 0, y.max(), linestyles='dashed', colors='g', linewidth=2,
+            plt.vlines(q2, 0, y.max(), linestyles='dashed', colors='g', linewidth=2,
                        label='iid 95%')
+            plt.title(f"{ds} 0.95: {i_m[2]:.2f} 0.05: {o_m[2]:.2f}")
             plt.show()
 
         noods = np.array(oods).reshape(-1)

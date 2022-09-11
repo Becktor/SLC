@@ -97,7 +97,7 @@ def vos_update(model, vos_dict):
             #weight_crit2[-1] = 1/128
             #criterion2 = torch.nn.CrossEntropyLoss(weight=weight_crit2)
 
-            clamped_inp = torch.clamp(input_for_lr, min=0.01)
+            clamped_inp = torch.clamp(input_for_lr, min=0.00001)
             shifted_means = torch.log(run_means.mean() / clamped_inp)
             # #xe = shifted_means * model.ood_mean
             # #out_j = xe.unsqueeze(1)

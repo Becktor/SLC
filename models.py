@@ -302,15 +302,15 @@ class VOSModel(nn.Module):
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        # self.mcmc_layer = nn.Sequential(
-        #     SuperDropout(drop_rate),
-        #     nn.Linear(in_channels, vos_multivariate_dim),
-        #     nn.ReLU(inplace=True),
-        #     #SuperDropout(drop_rate),
-        # )
+        self.mcmc_layer = nn.Sequential(
+            SuperDropout(0.2, 0.1),
+            nn.Linear(in_channels, vos_multivariate_dim, bias=False),
+            nn.ReLU(inplace=True),
+            #SuperDropout(drop_rate),
+        )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        # self.drop = SuperDropout(0.2)
+        self.drop = SuperDropout(0.2)
         #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         # if use_norm:
         #     self.fc = NormedLinear(vos_multivariate_dim, n_classes)
@@ -325,7 +325,8 @@ class VOSModel(nn.Module):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
             elif isinstance(m, nn.Linear):
-                m.bias.data.zero_()
+                if m.bias is not None:
+                    m.bias.data.zero_()
 
         self.weight_energy = torch.nn.Linear(n_classes, 1)
         torch.nn.init.uniform_(self.weight_energy.weight)
@@ -408,13 +409,13 @@ class VOSModel(nn.Module):
         return output
 
     def forward_step(self, inp):
-        #_, x = self.model.forward_virtual(inp)
+        #_, output = self.model.forward_virtual(inp)
         x = self.model.get_features(inp)
         #x = self.drop(x)
         x = self.global_pool(x)
-        output = x.view(x.size(0), -1)
+        x = x.view(x.size(0), -1)
         #output = self.drop(output)
-        # output = self.mcmc_layer(x)
+        output = self.mcmc_layer(x)
         #x = self.to_multivariate_variables(x)
         #output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
