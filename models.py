@@ -302,15 +302,15 @@ class VOSModel(nn.Module):
         else:
             self.model = timm.create_model(model_name, pretrained=True, drop_rate=drop_rate)
         self.global_pool = nn.AdaptiveAvgPool2d(1)
-        self.mcmc_layer = nn.Sequential(
-            SuperDropout(drop_rate),
-            nn.Linear(in_channels, vos_multivariate_dim),
-            nn.ReLU(inplace=True),
-            #SuperDropout(drop_rate),
-        )
+        # self.mcmc_layer = nn.Sequential(
+        #     SuperDropout(drop_rate),
+        #     nn.Linear(in_channels, vos_multivariate_dim),
+        #     nn.ReLU(inplace=True),
+        #     #SuperDropout(drop_rate),
+        # )
         self.drop_rate = drop_rate
         self.eye_matrix = torch.eye(vos_multivariate_dim, device='cuda')
-        self.drop = SuperDropout(0.2)
+        # self.drop = SuperDropout(0.2)
         #self.to_multivariate_variables = torch.nn.Linear(out_channels, vos_multivariate_dim)
         # if use_norm:
         #     self.fc = NormedLinear(vos_multivariate_dim, n_classes)
@@ -412,9 +412,9 @@ class VOSModel(nn.Module):
         x = self.model.get_features(inp)
         #x = self.drop(x)
         x = self.global_pool(x)
-        x = x.view(x.size(0), -1)
+        output = x.view(x.size(0), -1)
         #output = self.drop(output)
-        output = self.mcmc_layer(x)
+        # output = self.mcmc_layer(x)
         #x = self.to_multivariate_variables(x)
         #output = nn.ReLU(inplace=True)(x)
         pred = self.fc(output)
